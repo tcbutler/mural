@@ -180,23 +180,56 @@ function estimateShapeCount(inputs: ProcessingEstimateInputs, pixels: number): n
 // benchFlatten), fit by least-squares through the origin against
 // shapeCount^2. Previous value (25) was ~11x too low.
 //
-// KNOWN LIMITATION, not fixed by this recalibration: this coefficient (and
-// the shapeCount^2 formula generally) only knows shape *count*, not shape
-// *complexity*. A raster color-separation mask traced from a detailed
-// image (e.g. a busy cartoon) can come back as ONE compound path per color
-// with thousands of internal sub-loops from Potrace - shapeCount stays
-// tiny (1 per layer) but a single subtract() between two such paths is
-// dramatically more expensive than this formula assumes. Measured
-// end-to-end on Bluey_Hero.png (500px, 2-4 colors, cross-layer knockout):
-// real cost was 3-14 SECONDS against a shapeCount of only 2-4 per side -
-// three to four orders of magnitude beyond what shapeCount^2 x this
-// coefficient would predict. There is no pre-render signal available to
-// this estimator (which only knows requested colorCount, not what Potrace
-// will actually produce) that would let it see this coming; fixing it
-// properly would need either a post-vectorize complexity signal (e.g. real
-// traced point count) threaded into the estimate, or a pipeline-side fix
-// (flattener.ts operating on decomposed sub-paths instead of whole
-// compound paths). Flagged separately rather than addressed here.
+// SHAPE COUNT vs SHAPE COMPLEXITY - measured residual, deliberately left
+// unmodelled: this coefficient (and the shapeCount^2 formula generally)
+// only knows shape *count*, not shape *complexity*. A raster
+// color-separation mask traced from a detailed image (e.g. a busy cartoon)
+// can come back as ONE compound path per color with thousands of internal
+// sub-loops from Potrace - the real per-layer shape count is 1, while
+// estimateShapeCount() projects tens of shapes from pixel count and
+// complexity. The formula therefore gets the right magnitude for the wrong
+// reason on these inputs.
+//
+// History: this section previously recorded a 3-14 SECOND real cost on
+// Bluey_Hero.png (500px, 300mm, 2-4 colors, cross-layer knockout), three
+// to four orders of magnitude past what the formula predicted, and blamed
+// shape complexity inside paper.js's boolean subtract. That diagnosis was
+// wrong. The cost was in src/geometry/offset.ts's clipperSolutionToPathItem,
+// which reassembled Clipper's offset solution with one paper.js boolean op
+// per ring against a growing accumulator; it is fixed (commit 2a0cbbd) by
+// handing the rings straight to a CompoundPath.
+//
+// RE-MEASURED 2026-08-18, same machine and inputs, after that fix
+// (tsc/bench/runBenchmarks.ts's benchKnockout, deviceFactor ~1.01):
+//   colors   real knockout delta   this model predicts   residual
+//     2            0.85 s                0.45 s           +0.40 s
+//     3            1.56 s                0.97 s           +0.59 s
+//     4            1.93 s                1.75 s           +0.19 s
+// (was 3.2 / 8.2 / 15.0 s real before the offset.ts fix.) The model now
+// under-predicts by under 2x and by under 0.6 s absolute - in line with the
+// other stages' fit error, not an outlier.
+//
+// MEASURED DEAD END, do not re-propose: decomposing the operands so
+// flattener.ts subtracts sub-path against sub-path instead of whole
+// compound against whole compound. Prototyped and timed: decomposing both
+// operands into proper disjoint components (outer ring plus its contained
+// holes) and pruning pairs by bounding box prunes 97.7% of pairs (183 of
+// 7930 survive on the heaviest real pair), and the areas match exactly - so
+// it is correct, just slower. The 183 surviving subtracts cost 819 ms plus
+// 43 ms to decompose, against 634 ms for the single whole-compound
+// subtract: 0.7x. paper.js's boolean carries enough fixed per-call cost
+// that its own whole-compound handling beats N small ones.
+//
+// The other candidate - threading a post-vectorize complexity signal (real
+// traced sub-path/point count, available right after vectorizeImageDataColor)
+// into the estimate - is NOT worth the plumbing at these numbers. It would
+// buy at most the sub-second residual above, and it would have to arrive
+// after vectorize, whereas this estimator runs strictly before any tracing
+// (main.ts's 'estimate' message carries only the raw raster, so the user
+// sees the number before committing to a render). Paying for it means
+// splitting the estimate into a pre- and post-vectorize phase across the
+// worker protocol. Revisit only if a real input makes the residual large
+// again.
 export const FLATTEN_US_PER_SHAPE_PAIR = 280;
 
 function estimateFlattenKnockoutSeconds(inputs: ProcessingEstimateInputs, shapeCount: number): number {
