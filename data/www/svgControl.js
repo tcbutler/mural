@@ -7,7 +7,20 @@ document.body.addEventListener("click", function(e) {
 	}
 });
 
-export const renderScale = 2;
+// Raster detail budget for the Vector -> Raster -> Vector path, as the long
+// edge in pixels.
+//
+// This deliberately does NOT derive from the plot's physical size. It used to:
+// the raster was currentWidth/currentHeight (millimetres) times a fixed 2, so
+// asking for A4 instead of a 1200mm wall cut the traced detail by more than
+// 5x - and because the tracer's despeckle threshold is measured in pixels,
+// small features didn't merely soften, they vanished. How much detail to trace
+// is a property of the artwork, not of the paper it lands on.
+//
+// 2400 is the largest raster the old formula ever produced (at the 1200mm
+// default), so the worst-case memory footprint is unchanged; small plots
+// simply stop being starved.
+export const rasterLongEdgePx = 2400;
 
 export function initSvgControl() {
     $("#zoomIn").click(function() {
@@ -105,7 +118,7 @@ function normalizeSvg() {
             width = parseFloat(viewBox[2]);
             height = parseFloat(viewBox[3]);
         }
-    } else {
+    } else if (width && height) {
         svgElement.setAttribute("viewBox", `0, 0, ${width}, ${height}`);
     }
 
@@ -186,6 +199,18 @@ function convertUnitsToPx(dimension) {
     }
     const value = parseFloat(match[1]);
     const unit = match[2] || "px"; // Default to pixels if no unit is provided
+
+    // A percentage is relative to the viewport the SVG is placed in, not an
+    // intrinsic size, so there is no pixel value to convert it to here.
+    // Returning null lets normalizeSvg() fall through to the viewBox, which is
+    // the real intrinsic size. The previous behaviour fell into the
+    // `|| 1` default below and treated width="100%" as 100px - which silently
+    // forced sourceWidth === sourceHeight === 100, i.e. a 1:1 aspect ratio for
+    // every percentage-sized SVG regardless of its actual proportions.
+    if (unit === "%") {
+        return null;
+    }
+
     const conversionFactor = unitConversionFactors[unit] || 1;
     return value * conversionFactor; // Convert to pixels
 }
@@ -196,10 +221,6 @@ export function getTargetWidth() {
 
 export function getTargetHeight() {
     return currentHeight;
-}
-
-export function getRenderScale() {
-    return renderScale;
 }
 
 export function getRenderSvg() {
@@ -224,24 +245,50 @@ function makeTransformedSvgWithHeight() {
     const svgElement = clonedSvg.documentElement;
 
     const viewBox = svgElement.getAttribute("viewBox").split(/[\s,]/).filter(s => s != "");
+    const vbMinX = parseFloat(viewBox[0]);
+    const vbMinY = parseFloat(viewBox[1]);
     const vbWidth = parseFloat(viewBox[2]);
     const vbHeight = parseFloat(viewBox[3]);
 
-    const scaledAffine = [...affineTransform];
-    scaledAffine[4] = scaledAffine[4] * vbWidth;
+    // Pan is stored as a fraction of the viewport, zoom as a plain scale
+    // factor. Read both off up front - the scaledAffine translation slots get
+    // overwritten below and can no longer be used to recover either one.
+    const zoomX = affineTransform[0];
+    const zoomY = affineTransform[3];
+    const panX = affineTransform[4];
+    const panY = affineTransform[5];
 
+    // An SVG matrix() scales about the user-space origin - for a viewBox
+    // starting at (0,0) that is the artwork's top-left corner. Zooming in
+    // therefore used to push the artwork down and right, clipping its right
+    // and bottom edges off the viewBox while opening an ever-growing margin at
+    // the top-left, rather than magnifying about the middle of the frame the
+    // way the +/- buttons imply. Offsetting the translation by
+    // (1 - zoom) * centre pins the viewBox centre in place instead.
+    //
+    // Deliberately derived from the ORIGINAL viewBox, before the pan-down
+    // growth below extends it: the user is zooming about the centre of the
+    // artwork they can see, not the centre of a canvas that panning has since
+    // made taller.
+    const zoomOffsetX = (1 - zoomX) * (vbMinX + vbWidth / 2);
+    const zoomOffsetY = (1 - zoomY) * (vbMinY + vbHeight / 2);
+
+    const scaledAffine = [...affineTransform];
+    scaledAffine[4] = panX * vbWidth + zoomOffsetX;
+    scaledAffine[5] = panY * vbHeight + zoomOffsetY;
+
+    // Panning downward grows the canvas instead of clipping the top. Keyed off
+    // the pan component alone, NOT the combined translation above: that now
+    // carries the zoom offset too, so testing it would enter (or skip) this
+    // branch because of a zoom the user applied rather than a downward pan.
     let newHeight = parseFloat(svgElement.getAttribute("height"));
-    if (scaledAffine[5] > 0) {
+    if (panY > 0) {
         // when shifting down increase height
-        const heightOffset = scaledAffine[5] * newHeight;
-        newHeight = newHeight + heightOffset;
+        newHeight = newHeight + panY * newHeight;
         svgElement.setAttribute("height", newHeight);
 
-        scaledAffine[5] = scaledAffine[5] * vbHeight;
-        viewBox[3] = vbHeight + scaledAffine[5];
+        viewBox[3] = vbHeight + panY * vbHeight;
         svgElement.setAttribute("viewBox", viewBox.join(", "));
-    } else {
-        scaledAffine[5] = scaledAffine[5] * vbHeight;
     }
 
     const transfromGroup = clonedSvg.getElementById(transformGroupID);
@@ -257,23 +304,42 @@ function updateTransformText() {
     $("#transformText").text(`(${normalizeNumber(affineTransform[4] * 100)}, ${normalizeNumber(affineTransform[5] * 100)}) ${normalizeNumber(affineTransform[0])}x`);
 }
 
-export async function getCurrentSvgImageData() {
-    const scaledHeight = currentHeight * renderScale;
-    const scaledWidth = currentWidth * renderScale;
-    
-    const svgString = new XMLSerializer().serializeToString(transformedSvg);
+// Raster pixel dimensions for the current canvas, preserving its aspect so a
+// single uniform scale factor (toCommands.ts's width/svgWidth) maps both axes.
+function getRasterSize() {
+    if (!(currentWidth > 0) || !(currentHeight > 0)) {
+        throw new Error("Invalid canvas size");
+    }
+    const aspect = currentHeight / currentWidth;
+    if (currentWidth >= currentHeight) {
+        return [rasterLongEdgePx, Math.max(1, Math.round(rasterLongEdgePx * aspect))];
+    }
+    return [Math.max(1, Math.round(rasterLongEdgePx / aspect)), rasterLongEdgePx];
+}
 
-    const canvas = new OffscreenCanvas(scaledWidth, scaledHeight);
-    const canvasContext = canvas.getContext("2d",);
+export async function getCurrentSvgImageData() {
+    const [rasterWidth, rasterHeight] = getRasterSize();
+
+    // Rasterise the SVG AT the target size rather than at its own
+    // (millimetre-valued) width/height and resampling afterwards. An <img>
+    // decodes an SVG at its intrinsic size, so the old path only ever captured
+    // currentWidth pixels of real detail before handing it to
+    // createImageBitmap - and no resize can recover detail that was never
+    // rendered in the first place. Overriding width/height on a throwaway
+    // clone leaves transformedSvg (and so the on-screen preview) untouched.
+    const rasterSvg = transformedSvg.cloneNode(true);
+    rasterSvg.documentElement.setAttribute("width", rasterWidth);
+    rasterSvg.documentElement.setAttribute("height", rasterHeight);
+
+    const svgString = new XMLSerializer().serializeToString(rasterSvg);
+
+    const canvas = new OffscreenCanvas(rasterWidth, rasterHeight);
+    const canvasContext = canvas.getContext("2d");
     const img = await loadImage(`data:image/svg+xml;base64,${btoa(svgString)}`);
 
-    const bitmap = await createImageBitmap(img, {resizeHeight: scaledHeight, resizeWidth: scaledWidth});
+    canvasContext.drawImage(img, 0, 0, rasterWidth, rasterHeight);
 
-    canvasContext.drawImage(bitmap, 0, 0, scaledWidth, scaledHeight);
-    
-    const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
-    
-    return imageData;
+    return canvasContext.getImageData(0, 0, canvas.width, canvas.height);
 }
 
 async function loadImage(src) {

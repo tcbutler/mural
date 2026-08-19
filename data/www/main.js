@@ -749,12 +749,18 @@ function init() {
                     // renderHueGroupingSummary.
                     vectorizeHueGroups = e.data.payload.hueGroups || null;
                     renderHueGroupingSummary(vectorizeHueGroups);
-                    const scale = svgControl.getRenderScale();
+                    // Report the raster's ACTUAL pixel size rather than
+                    // re-deriving it from the target size times a scale
+                    // factor. toCommands.ts scales the traced geometry by
+                    // width/svgWidth, so any drift between the assumed and
+                    // real raster size silently mis-scales the whole plot;
+                    // `raster` is the ImageData that was actually traced, so
+                    // the two cannot disagree.
                     renderSvgInWorker(
                         currentWorker,
                         vectorizedSvg,
-                        svgControl.getTargetWidth() * scale,
-                        svgControl.getTargetHeight() * scale,
+                        raster.width,
+                        raster.height,
                         false,
                     );
                 }
