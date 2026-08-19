@@ -10,6 +10,7 @@
 #include "runner.h"
 #include "pen.h"
 #include "display.h"
+#include "statusled.h"
 #include "phases/phasemanager.h"
 #include <stdexcept>
 
@@ -20,6 +21,7 @@ Movement *movement;
 Runner *runner;
 Pen *pen;
 Display *display;
+StatusLed *statusLed;
 
 PhaseManager* phaseManager;
 
@@ -94,6 +96,13 @@ void setup()
     delay(10);
     Serial.begin(9600);
 
+    // Brought up first, ahead of everything that can fail or block, so the
+    // machine can report a failed LittleFS mount or a long WiFi connect
+    // without a serial cable attached.
+    statusLed = new StatusLed();
+    statusLed->begin();
+    statusLed->setState("boot");
+
     if (!LittleFS.begin(true)) {
         Serial.println("An Error has occurred while mounting LittleFS");
         return;
@@ -119,6 +128,8 @@ void setup()
         resetAfterConnect = true;
     };
 
+    statusLed->setState("wifi");
+
     WiFiManager wifiManager;
 
     wifiManager.setConnectTimeout(20);
@@ -138,7 +149,7 @@ void setup()
 
     Serial.println("Started mDNS for mural");
 
-    runner = new Runner(movement, pen, display);
+    runner = new Runner(movement, pen, display, statusLed);
     runner->setEventSource(&events);
     Serial.println("Initialized runner");
 
@@ -244,11 +255,13 @@ void setup()
     Serial.println("Server started");
 
     display->displayHomeScreen("http://" + WiFi.localIP().toString(), "or", "http://mural.local");
+    statusLed->setState("ready");
     
 }
 
 void loop()
 {
+    statusLed->tick();
     movement->runSteppers();
     runner->run();
     phaseManager->getCurrentPhase()->loopPhase();

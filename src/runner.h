@@ -4,6 +4,7 @@
 #include "tasks/task.h"
 #include "pen.h"
 #include "display.h"
+#include "statusled.h"
 #include "LittleFS.h"
 #include <ESPAsyncWebServer.h>
 class PenSwapTask;
@@ -42,6 +43,7 @@ class Runner {
     Movement *movement;
     Pen *pen;
     Display *display;
+    StatusLed *statusLed;
     AsyncEventSource *events = nullptr;
     unsigned long lastEventMillis = 0;
     bool initTaskProvider();
@@ -126,7 +128,7 @@ class Runner {
     // generic "Not ready". Empty when no specific reason was recorded.
     String lastError;
 
-    Runner(Movement *movement, Pen *pen, Display *display);
+    Runner(Movement *movement, Pen *pen, Display *display, StatusLed *statusLed);
     bool start();
     void run();
     void dryRun();

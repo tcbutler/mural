@@ -38,11 +38,12 @@ double angleBetweenSegments(Movement::Point a, Movement::Point b, Movement::Poin
 }
 #endif
 
-Runner::Runner(Movement *movement, Pen *pen, Display *display) {
+Runner::Runner(Movement *movement, Pen *pen, Display *display, StatusLed *statusLed) {
     stopped = true;
     this->movement = movement;
     this->pen = pen;
     this->display = display;
+    this->statusLed = statusLed;
     lastError = "";
 }
 
@@ -524,6 +525,16 @@ void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stat
 // Pushes at most ~1/sec (force bypasses the throttle for state-change events, per
 // docs/multi-color.md's "at most ~1/sec and on state changes").
 void Runner::pushProgressEvent(bool force, const char* stateOverride) {
+    // Update the status LED first. This sits above both the events==nullptr
+    // guard and the throttle below on purpose: the LED is the machine's only
+    // local indicator (BOM.md has no display), so it must keep working with no
+    // browser attached, and a state change should reach it immediately rather
+    // than waiting out the SSE rate limit. setState() only stores values - the
+    // actual LED I/O happens in StatusLed::tick() from loop().
+    if (statusLed != nullptr) {
+        statusLed->setState(stateOverride ? stateOverride : getStateName(), progress);
+    }
+
     if (events == nullptr) {
         return;
     }
