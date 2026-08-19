@@ -43,6 +43,21 @@ jobs:
       - name: Check flash-size budgets
         run: python tools/check_sizes.py
 
+  kinematics:
+    name: Host kinematics accuracy + parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pure-math host harness: no PlatformIO/Arduino toolchain needed. This was
+      # committed red and stayed red because nothing ran it; see the header comment
+      # in test/host/parity_test.cpp.
+      - name: Build and run kinematics harness
+        working-directory: test/host
+        run: |
+          g++ -std=c++17 -O2 -I../../src ../../src/kinematics.cpp parity_test.cpp -o parity_test
+          ./parity_test
+
   pipeline:
     name: TS pipeline
     runs-on: ubuntu-latest
