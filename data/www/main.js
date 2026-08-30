@@ -1546,6 +1546,7 @@ function startLiveDrawingView() {
     $("#resumeDrawingBtn").hide().prop('disabled', false);
     $("#penSwapPanel").hide();
     $("#drawingFinishedPanel").hide();
+    $("#stallNotice").hide();
     $("#liveConnectionNotice").hide();
     $("#liveProgressBar").css('width', '0%').text('0%');
     $("#liveProgressPct").text('0%');
@@ -1637,6 +1638,7 @@ function updateLiveProgress(data) {
     if (data.state === 'penSwap') {
         $("#pauseDrawingBtn").hide();
         $("#resumeDrawingBtn").hide();
+        $("#stallNotice").hide();
         $("#penSwapPanel").show();
         const penLabel = data.penSwapName ? `${data.penSwapIndex} (${data.penSwapName})` : String(data.penSwapIndex);
         $("#penSwapTitle").text(`Insert pen ${penLabel}`);
@@ -1644,10 +1646,17 @@ function updateLiveProgress(data) {
         $("#penSwapPanel").hide();
         if (data.state === 'paused' || data.state === 'stalled') {
             $("#pauseDrawingBtn").hide();
-            $("#resumeDrawingBtn").show().prop('disabled', data.state === 'stalled');
+            // Resume IS the recovery from a stall (docs/tmc-uart.md: it clears the
+            // stall, lowers the pen if it was down and retries the interrupted
+            // move). Disabling it while stalled - as this did - left the only
+            // documented way out of a stall unreachable, with no other enabled
+            // control on the screen.
+            $("#resumeDrawingBtn").show().prop('disabled', false);
+            $("#stallNotice").toggle(data.state === 'stalled');
         } else {
             $("#pauseDrawingBtn").show().prop('disabled', false);
             $("#resumeDrawingBtn").hide();
+            $("#stallNotice").hide();
         }
     }
 
@@ -1672,6 +1681,7 @@ function showDrawingFinished(data) {
     $("#resumeDrawingBtn").hide();
     $("#penSwapPanel").hide();
     $("#liveConnectionNotice").hide();
+    $("#stallNotice").hide();
     $("#drawingFinishedPanel").show();
 
     if (data && typeof data.totalLines === 'number' && data.totalLines > 0) {

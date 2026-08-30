@@ -398,6 +398,13 @@
         </div>
         <h6 class="mb-2 fw-normal"><small class="text-muted" id="liveStatsText"></small></h6>
         <div class="alert alert-warning" id="liveConnectionNotice" style="display:none;">Connection lost, reconnecting&hellip;</div>
+        <!-- Shown on a StallGuard stall (MURAL_TMC_UART builds). Resume is the
+             documented recovery - see docs/tmc-uart.md - so this explains what to
+             do rather than leaving the state unexplained. -->
+        <div class="alert alert-danger" id="stallNotice" style="display:none;">
+          A motor stalled and the pen has been lifted. Clear whatever the belts caught on,
+          then Resume &mdash; the interrupted move is retried, so no power cycle is needed.
+        </div>
         <div class="card mb-2" id="penSwapPanel" style="display:none;">
           <div class="card-body">
             <h5 class="card-title" id="penSwapTitle">Insert pen</h5>
