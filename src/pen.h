@@ -65,5 +65,10 @@ class Pen {
     bool slowUp();
     bool slowDown();
     bool isDown();
+
+    // Estimated seconds for one pen up or down move, derived from the same
+    // constants doSlowMove() actually steps through. Returns 0 before the pen
+    // has been calibrated, since the sweep is unknown until then.
+    double estimateMoveSeconds() const;
 };
 #endif

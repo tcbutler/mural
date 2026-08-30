@@ -79,6 +79,37 @@ class Runner {
     static const int checkpointIntervalLines = 20;
     void writeCheckpoint(uint32_t offset);
 
+    // --- Time-weighted progress ------------------------------------------
+    //
+    // Progress used to be executedLines/totalLines, which is a poor stand-in for
+    // how far through a plot you are: a 400mm infill sweep and a 2mm hop are one
+    // line each, and pen-up travel runs 3x faster than pen-down drawing
+    // (moveSpeedSteps vs printSpeedSteps). The result crawled through dense
+    // areas and then leapt at the end.
+    //
+    // These hold an estimate of the plot's total duration and how much of it is
+    // done, both in seconds, so `percent` tracks elapsed plotting time instead.
+    // The estimate does not need to predict wall-clock accurately - only to be
+    // proportional to the real thing, since it is used as a ratio.
+    double totalEstimatedSeconds = 0;
+    double completedSeconds = 0;
+    // Cost of the task currently in flight. Credited to completedSeconds only
+    // once that task reports isDone(), which is also what stops the last line of
+    // a plot from reading 100% while it is still being drawn.
+    double pendingTaskSeconds = 0;
+
+    struct PlotEstimate {
+        int lines = 0;
+        double totalSeconds = 0;
+        // Seconds of work before `offset`, for restoring progress on resume.
+        double secondsBeforeOffset = 0;
+    };
+    // Walks the command lines from the current file position to EOF, summing the
+    // estimated duration. Leaves the file positioned at EOF; callers seek back.
+    void scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstimate& out);
+    double estimateSegmentSeconds(Movement::Point from, Movement::Point to, bool penDown) const;
+    int computePercent() const;
+
     const char* getStateName();
     void pushProgressEvent(bool force, const char* stateOverride = nullptr);
 

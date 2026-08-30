@@ -204,6 +204,12 @@ public:
     void runSteppers();
     bool beginLinearTravel(double x, double y, int speed, float& moveTime);
 
+    // Estimated seconds to cover `distanceMm` at `speedSteps` steps/s, using the
+    // calibrated pulley circumference rather than the compiled-in default.
+    // Approximate by construction - belt speed only equals pen speed along the
+    // belt direction - so this is for weighting progress, not motion planning.
+    double estimateTravelSeconds(double distanceMm, int speedSteps) const;
+
     // Used for calibration of the esteps.
     void extend1000mm();
 

@@ -59,6 +59,70 @@ String Runner::getLastError() {
 // re-applied to whichever one gets updated). Static/pen-and-movement-independent so
 // countTotalCommandLines() can use it too, from a File it opened itself, without
 // needing a Runner instance.
+// --- Time-weighted progress helpers ---------------------------------------
+
+double Runner::estimateSegmentSeconds(Movement::Point from, Movement::Point to, bool penDown) const {
+    const double mm = Movement::distanceBetweenPoints(from, to);
+    // Drawing runs at printSpeedSteps, repositioning at the ~3x faster
+    // moveSpeedSteps (see InterpolatingMovementTask::currentSpeedSteps).
+    return movement->estimateTravelSeconds(mm, penDown ? printSpeedSteps : moveSpeedSteps);
+}
+
+void Runner::scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstimate& out) {
+    // One pass over the command lines, replaying them symbolically: track where
+    // the pen would be and whether it is down, and accumulate the estimated
+    // duration of every move and pen action. This pass already existed to count
+    // lines - it now also costs them, which is why time-weighted progress needs
+    // no extra file read.
+    //
+    // `offset` is a checkpoint position; the work before it is recorded
+    // separately so a resumed plot starts from the right percentage instead of 0.
+    Movement::Point position = startPosition;
+    bool penDown = false;
+    const double penSeconds = pen->estimateMoveSeconds();
+
+    while (openedFile.available()) {
+        if (openedFile.position() <= offset) {
+            out.secondsBeforeOffset = out.totalSeconds;
+        }
+        auto line = openedFile.readStringUntil('\n');
+        out.lines++;
+        if (line.length() == 0) {
+            continue;
+        }
+
+        const char kind = line.charAt(0);
+        if (kind == 'p') {
+            out.totalSeconds += penSeconds;
+            penDown = (line.charAt(1) == '1');
+        } else if (kind == 'c') {
+            // A pen swap blocks on a human, so it has no meaningful duration to
+            // predict. Counting it as zero keeps the remaining work honest.
+            continue;
+        } else {
+            const int sep = line.indexOf(' ');
+            if (sep <= 0) {
+                continue;
+            }
+            Movement::Point target(line.substring(0, sep).toDouble(), line.substring(sep + 1).toDouble());
+            out.totalSeconds += estimateSegmentSeconds(position, target, penDown);
+            position = target;
+        }
+    }
+}
+
+int Runner::computePercent() const {
+    if (totalEstimatedSeconds <= 0) {
+        // No usable estimate (empty plot, or an uncalibrated pen at scan time) -
+        // fall back to the old line-based ratio rather than reporting nothing.
+        return totalLines > 0 ? (int)(executedLines * 100L / totalLines) : 100;
+    }
+    int percent = (int)((completedSeconds / totalEstimatedSeconds) * 100.0);
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return percent;
+}
+
 bool Runner::parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut) {
     paletteCountOut = 0;
 
@@ -150,24 +214,28 @@ bool Runner::initTaskProvider() {
 
     Serial.println("Total distance to travel: " + String(totalDistance));
 
-    // Pre-scan the command lines once so progress can be reported as
-    // executedLines/totalLines instead of tracking distance travelled.
-    auto commandsStart = openedFile.position();
-    totalLines = 0;
-    while (openedFile.available()) {
-        openedFile.readStringUntil('\n');
-        totalLines++;
-    }
-    openedFile.seek(commandsStart);
-
-    executedLines = 0;
-    progress = -1; // so 0% appears right away
-
     Movement::Point startPosition;
     if (!movement->getCoordinates(startPosition)) {
         Serial.println("Not ready to get coordinates");
         return false;
     }
+
+    // Pre-scan the command lines once, counting them and costing them (see
+    // scanPlot). The line count is still reported for the UI's "line n/m"
+    // readout; the durations are what drive `percent`.
+    auto commandsStart = openedFile.position();
+    PlotEstimate estimate;
+    scanPlot(startPosition, 0, estimate);
+    openedFile.seek(commandsStart);
+
+    totalLines = estimate.lines;
+    totalEstimatedSeconds = estimate.totalSeconds;
+    completedSeconds = 0;
+    pendingTaskSeconds = 0;
+    Serial.println("Estimated plot duration: " + String(totalEstimatedSeconds, 1) + "s over " + String(totalLines) + " lines");
+
+    executedLines = 0;
+    progress = -1; // so 0% appears right away
 
     auto homeCoordinates = movement->getHomeCoordinates();
     finishingSequence[0] = new InterpolatingMovementTask(movement, pen, homeCoordinates);
@@ -206,6 +274,7 @@ Task *Runner::getNextTask()
 
         if (isPenLine)
         {
+            pendingTaskSeconds = pen->estimateMoveSeconds();
             if (line.charAt(1) == '1')
             {
                 //Serial.println("Pen down");
@@ -227,12 +296,16 @@ Task *Runner::getNextTask()
                 ? palette[colorIndex - 1]
                 : ("pen " + String(colorIndex));
             Serial.println("Pen swap requested: color " + String(colorIndex) + " (" + name + ")");
+            // Blocks on a human swapping the pen, so it has no duration worth
+            // predicting - matching how scanPlot() costed it.
+            pendingTaskSeconds = 0;
             return new PenSwapTask(pen, movement, this, colorIndex, name);
         }
         else
         {
             auto x = line.substring(0, line.indexOf(" ")).toDouble();
             auto y = line.substring(line.indexOf(" ") + 1).toDouble();
+            auto previousTarget = targetPosition;
             targetPosition = Movement::Point(x, y);
 
 #ifdef MURAL_SMOOTH_MOTION
@@ -265,6 +338,12 @@ Task *Runner::getNextTask()
             }
             targetPosition = mergedTarget;
 #endif
+
+            // Cost this move for progress. Uses the pen's CURRENT state, which is
+            // correct because Runner runs PenTask and movement tasks strictly
+            // sequentially - no movement task ever straddles a pen transition
+            // (see InterpolatingMovementTask's header comment).
+            pendingTaskSeconds = estimateSegmentSeconds(previousTarget, targetPosition, pen->isDown());
 
             return new InterpolatingMovementTask(movement, pen, targetPosition);
         }
@@ -335,16 +414,20 @@ void Runner::run()
             return;
         }
 
+        // The task that just reported isDone() is genuinely finished, so its
+        // cost becomes elapsed work here rather than when it was dispatched.
+        // Crediting on dispatch is what used to make the final line show 100%
+        // while it was still being drawn.
+        completedSeconds += pendingTaskSeconds;
+        pendingTaskSeconds = 0;
+
         delete currentTask;
         currentTask = getNextTask();
         if (currentTask != NULL)
         {
             currentTask->startRunning();
 
-            auto newProgress = totalLines > 0 ? int(executedLines * 100 / totalLines) : 100;
-            if (newProgress > 100) {
-                newProgress = 100;
-            }
+            auto newProgress = computePercent();
             if (progress != newProgress) {
                 Serial.println("Progress: " + String(newProgress));
                 progress = newProgress;
@@ -495,13 +578,10 @@ const char* Runner::getStateName() {
 }
 
 void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stateOverride) {
-    int percent = totalLines > 0 ? int(executedLines * 100 / totalLines) : 100;
-    if (percent > 100) {
-        percent = 100;
-    }
-    if (percent < 0) {
-        percent = 0;
-    }
+    // Same figure the OLED shows - computePercent() is the single definition of
+    // "how far through the plot are we", so the display and the web UI cannot
+    // disagree.
+    const int percent = computePercent();
 
     DynamicJsonBuffer jsonBuffer;
     JsonObject &root = jsonBuffer.createObject();
@@ -677,11 +757,15 @@ bool Runner::beginResume(const Checkpoint& cp) {
     }
 
     auto commandsStart = openedFile.position();
-    totalLines = 0;
-    while (openedFile.available()) {
-        openedFile.readStringUntil('\n');
-        totalLines++;
-    }
+    // Same costing pass as a fresh run, but also recording how much of the plot
+    // sits before the checkpoint so progress resumes at the right percentage
+    // rather than restarting from 0.
+    PlotEstimate estimate;
+    scanPlot(Movement::Point(cp.x, cp.y), cp.offset, estimate);
+    totalLines = estimate.lines;
+    totalEstimatedSeconds = estimate.totalSeconds;
+    completedSeconds = estimate.secondsBeforeOffset;
+    pendingTaskSeconds = 0;
 
     if (cp.offset < commandsStart || cp.offset > openedFile.size()) {
         Serial.println("Resume failed: checkpoint offset out of range");

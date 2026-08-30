@@ -120,3 +120,13 @@ bool Pen::slowDown() {
 bool Pen::isDown() {
     return currentPosition == penDistance;
 }
+
+double Pen::estimateMoveSeconds() const {
+    if (penDistance < 0 || slowSpeedDegPerSec <= 0) {
+        return 0;
+    }
+    // doSlowMove() ramps from one angle to the other at slowSpeedDegPerSec and
+    // then settles for a fixed 200ms.
+    const int sweepDegrees = abs(90 - penDistance);
+    return (double)sweepDegrees / (double)slowSpeedDegPerSec + 0.2;
+}

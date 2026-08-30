@@ -534,3 +534,11 @@ bool Movement::hasStartedHoming() {
 int Movement::getTopDistance() {
     return topDistance;
 }
+
+double Movement::estimateTravelSeconds(double distanceMm, int speedSteps) const {
+    if (speedSteps <= 0 || circumference <= 0 || distanceMm <= 0) {
+        return 0;
+    }
+    const double mmPerStep = circumference / stepsPerRotation;
+    return distanceMm / (speedSteps * mmPerStep);
+}
