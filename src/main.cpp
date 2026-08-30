@@ -72,6 +72,35 @@ void handleSetPhysicsConstants(AsyncWebServerRequest *request) {
     handleGetPhysicsConstants(request);
 }
 
+// --- Abandon setup and start again -----------------------------------------
+//
+// The phase machine only ever moves forward: each step corresponds to something
+// physical having happened (belts retracted, belts extended, pen calibrated), and
+// a single-step "back" is mostly incoherent - clicking a button cannot un-extend
+// a belt. Starting over IS coherent, because re-walking the wizard is exactly the
+// physical re-setup that going back would require anyway.
+//
+// PhaseManager::reset() already existed for this but was only reachable from
+// BeginDrawing ("Reset") and ResumeDrawing ("Discard and start over"), leaving
+// RetractBelts, ExtendToHome and PenCalibration with no way out at all.
+//
+// Refused while drawing: abandoning a plot mid-stroke is a different decision
+// with different consequences (the pen is on the wall), and the drawing screen
+// has pause/resume for that.
+void handleStartOver(AsyncWebServerRequest *request) {
+    if (strcmp(phaseManager->getCurrentPhase()->getName(), "Drawing") == 0) {
+        request->send(409, "text/plain", "Pause the drawing first");
+        return;
+    }
+
+    // Leave the pen somewhere safe: setup may have left it at the release angle
+    // (loading a pen) or partway through a contact-point calibration.
+    pen->setRawValue(pen->getHighestLocked());
+
+    phaseManager->reset();
+    phaseManager->respondWithState(request);
+}
+
 // --- Free the belts for manual retraction ----------------------------------
 //
 // With the belts fully extended - a machine that lost power and slumped down the
@@ -332,6 +361,9 @@ void setup()
 
     server.on("/estepsCalibrationApply", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleEstepsCalibrationApply(request); });
+
+    server.on("/startOver", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleStartOver(request); });
 
     server.on("/setMotorsFree", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleSetMotorsFree(request); });

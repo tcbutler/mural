@@ -376,6 +376,21 @@ const server = http.createServer(async (req, res) => {
         return ok(res);
     }
 
+    if (p === '/startOver') {
+        // handleStartOver - PhaseManager::reset(): back to SetTopDistance, or a
+        // resume offer if a checkpoint survives. Refused while drawing.
+        if (state.phase === 'Drawing') {
+            res.writeHead(409, {'Content-Type':'text/plain'});
+            return res.end('Pause the drawing first');
+        }
+        penAngle = penLimits.highestLocked;
+        motorsFree = false;
+        state.resuming = false;
+        state.resumePercent = -1;
+        setPhase('SetTopDistance');
+        return json(res, stateDocument());
+    }
+
     if (p === '/setMotorsFree') {
         // handleSetMotorsFree: only while retracting, since releasing the motors
         // anywhere later would drop the machine.

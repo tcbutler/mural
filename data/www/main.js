@@ -1278,6 +1278,42 @@ function init() {
     // Release/hold the belts for manual retraction. The button reflects the
     // firmware's own motorsFree flag rather than a local toggle, so a reload can
     // never show "released" for motors that are actually holding, or the reverse.
+    // Every committed setup screen gets the same escape. Deliberately "Start
+    // over" rather than "Back": each phase corresponds to something physical
+    // having happened, so stepping back one screen cannot undo it, whereas
+    // re-walking the wizard is exactly the physical re-setup that would be
+    // needed anyway.
+    $(".start-over-btn").click(function() {
+        if (!window.confirm("Start the setup again from the beginning?")) {
+            return;
+        }
+        $(this).prop('disabled', true);
+        $.post("/startOver", {}, function(state) {
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $(".start-over-btn").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Pause the drawing before starting over"
+                : "Couldn't start over", null);
+        });
+    });
+
+    // Releases the holder so a pen carrier can be fitted before calibrating.
+    // /unlockPen is refused while drawing or moving, which is why the hint only
+    // appears on success.
+    $("#penCalReleaseHolder").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/unlockPen", {}, function() {
+            $("#penCalReleaseHolder").prop('disabled', false);
+            $("#penCalReleaseHint").show();
+        }).fail(function(xhr) {
+            $("#penCalReleaseHolder").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't release the holder", null);
+        });
+    });
+
     $("#freeMotorsBtn").click(function() {
         const releasing = !(currentState && currentState.motorsFree);
         $(this).prop('disabled', true);
@@ -1658,6 +1694,11 @@ function adaptToState(state) {
         case "PenCalibration":
             $.post("/setServo", {angle: 90});
             $("#penCalibrationSlide").show();
+            $("#penCalReleaseHint").hide();
+            // Only offer the release action when a distinct unlock angle has been
+            // calibrated; with the defaults it would be the same as "up" and would
+            // not actually free the carrier.
+            $("#penCalReleaseHolder").toggle(penLimits.unlocked > penLimits.highestLocked);
             // Prefill with the last calibrated pen angle, persisted in NVS.
             if (state.storedPenAngle && state.storedPenAngle !== -1) {
                 $("#servoRange")

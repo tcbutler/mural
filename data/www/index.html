@@ -58,7 +58,8 @@
           <b>Hold motors</b> before jogging or continuing.
         </div>
         <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="freeMotorsBtn">Release motors (pull belts by hand)</button>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="beltsRetracted">Belts are retracted</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="beltsRetracted">Belts are retracted</button>
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
       </div>
       <div id="distanceBetweenAnchorsSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
@@ -76,7 +77,8 @@
         <ul class="instr-list">
           <li class="instr-line" id="extendToHomeText">The belts will extend to their home position. Make sure the belts are unobstructed and the motors do not skip, or the drawing accuracy may be affected.</li>
         </ul>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="extendToHome">Extend to home position</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="extendToHome">Extend to home position</button>
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
         <div class="spinner-border mb-5 loading" id="extendingSpinner" role="status" style="visibility:hidden;"></div>
       </div>
       <div id="penCalibrationSlide" class="muralSlide" style="display:none;">
@@ -96,7 +98,16 @@
             <button type="button" class="btn btn-primary fs-4" id="penPlus">+</button>
           </div>
         </div>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="setPenDistance">Pen is touching the wall</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="setPenDistance">Pen is touching the wall</button>
+        <!-- Loading a pen is a precondition for calibrating one, so it belongs on
+             this screen. Previously the only route to the release position was the
+             tools panel, whose cog is hidden here. -->
+        <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="penCalReleaseHolder">No pen loaded? Release the holder</button>
+        <div class="alert alert-info py-2 mb-2" id="penCalReleaseHint" style="display:none;">
+          Holder released. Fit the pen carrier, then use &minus;/+ or the slider to
+          bring the pen back down to the wall.
+        </div>
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
       </div>
       <div id="svgUploadSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
