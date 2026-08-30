@@ -409,8 +409,18 @@ void setup()
     server.on(
         "/uploadCommands", HTTP_POST,
         [](AsyncWebServerRequest *request) {
+            // handleUpload() cannot answer the request itself - it runs per chunk,
+            // before the response is due - so a failure is reported here. Without
+            // this, a rejected upload still replied with a state document that
+            // looked like success, and the UI walked on to a machine holding no
+            // command file.
+            const char* uploadError = phaseManager->getUploadError();
+            if (uploadError != nullptr) {
+                request->send(507, "text/plain", uploadError);
+                return;
+            }
             handleGetState(request);
-        }, 
+        },
         handleUpload
     );
 

@@ -43,6 +43,10 @@ class PhaseManager {
 
     bool isResuming();
     Runner::Checkpoint getPendingCheckpoint();
+    // Non-null when the last command-file upload failed - see
+    // SvgSelectPhase::handleUpload. Lets the upload's response handler report the
+    // failure instead of returning a state document that looks like success.
+    const char* getUploadError();
     void clearResuming();
 };
 #endif

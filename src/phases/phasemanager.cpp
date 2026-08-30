@@ -74,6 +74,10 @@ void PhaseManager::setPhase(PhaseNames name) {
     }
 }
 
+const char* PhaseManager::getUploadError() {
+    return svgSelectPhase->getUploadError();
+}
+
 void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     auto currentPhase = getCurrentPhase()->getName();
     auto moving = movement->isMoving();
