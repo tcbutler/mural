@@ -1314,6 +1314,24 @@ function init() {
         });
     });
 
+    // Abandon a paused plot. Confirmed, because it clears the checkpoint - after
+    // this the job cannot be resumed, which is the point, but is irreversible.
+    $("#cancelDrawingBtn").click(function() {
+        if (!window.confirm("Cancel this drawing? It can't be resumed afterwards.")) {
+            return;
+        }
+        $(this).prop('disabled', true);
+        $.post("/cancelDrawing", {}, function(state) {
+            closeLiveEventSource();
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $("#cancelDrawingBtn").prop('disabled', false);
+            showError(xhr.status === 400
+                ? "Pause the drawing before cancelling it"
+                : "Couldn't cancel the drawing", null);
+        });
+    });
+
     $("#freeMotorsBtn").click(function() {
         const releasing = !(currentState && currentState.motorsFree);
         $(this).prop('disabled', true);
@@ -1772,6 +1790,7 @@ function startLiveDrawingView() {
     $("#penSwapPanel").hide();
     $("#drawingFinishedPanel").hide();
     $("#stallNotice").hide();
+    $("#cancelDrawingBtn").hide();
     $("#liveConnectionNotice").hide();
     $("#liveProgressBar").css('width', '0%').text('0%');
     $("#liveProgressPct").text('0%');
@@ -1878,10 +1897,12 @@ function updateLiveProgress(data) {
             // documented way out of a stall unreachable, with no other enabled
             // control on the screen.
             $("#resumeDrawingBtn").show().prop('disabled', false);
+            $("#cancelDrawingBtn").show().prop('disabled', false);
             $("#stallNotice").toggle(data.state === 'stalled');
         } else {
             $("#pauseDrawingBtn").show().prop('disabled', false);
             $("#resumeDrawingBtn").hide();
+            $("#cancelDrawingBtn").hide();
             $("#stallNotice").hide();
         }
     }
@@ -1908,6 +1929,7 @@ function showDrawingFinished(data) {
     $("#penSwapPanel").hide();
     $("#liveConnectionNotice").hide();
     $("#stallNotice").hide();
+    $("#cancelDrawingBtn").hide();
     $("#drawingFinishedPanel").show();
 
     if (data && typeof data.totalLines === 'number' && data.totalLines > 0) {

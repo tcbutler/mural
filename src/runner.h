@@ -173,6 +173,10 @@ class Runner {
     // docs/multi-color.md section 4) - also used by /pauseDrawing, /resumeDrawing,
     // and (once TMC UART stall detection is enabled) automatically on a stall.
     void pause();
+    // Abandons the current plot: lifts the pen, stops feeding commands, and
+    // clears the checkpoint so the job is not offered for resume afterwards.
+    // Only meaningful while paused - see PhaseManager/DrawingPhase.
+    bool cancelRun();
     void resumeRun();
     bool isPaused();
 

@@ -48,6 +48,10 @@ void NotSupportedPhase::useStoredCommands(AsyncWebServerRequest *request) {
     handleNotSupported(request);
 }
 
+void NotSupportedPhase::cancelDrawing(AsyncWebServerRequest *request) {
+    handleNotSupported(request);
+}
+
 void NotSupportedPhase::pauseDrawing(AsyncWebServerRequest *request) {
     handleNotSupported(request);
 }

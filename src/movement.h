@@ -173,6 +173,13 @@ public:
             this->y = y;
         }
         Point() {
+            // Zero rather than indeterminate. A default-constructed Point used to
+            // carry uninitialised doubles, which was harmless while it was only
+            // ever written before being read - and stopped being harmless as soon
+            // as Runner started reading targetPosition as the PREVIOUS position
+            // to measure each move against.
+            this->x = 0;
+            this->y = 0;
         }
     };
 

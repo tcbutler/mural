@@ -392,6 +392,9 @@ void setup()
     server.on("/pauseDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->pauseDrawing(request); });
 
+    server.on("/cancelDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
+              { phaseManager->getCurrentPhase()->cancelDrawing(request); });
+
     server.on("/resumeDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->resumeDrawing(request); });
 

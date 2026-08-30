@@ -550,6 +550,22 @@ const server = http.createServer(async (req, res) => {
         if (plot) { plot.paused = false; plot.stalled = false; broadcast('progress', progressPayload()); }
         return json(res, stateDocument());
     }
+    if (p === '/cancelDrawing') {
+        // DrawingPhase::cancelDrawing - only from a paused plot, then
+        // PhaseManager::reset(). Clears the checkpoint, so no resume offer after.
+        if (!plot || !plot.paused) {
+            res.writeHead(400, {'Content-Type':'text/plain'});
+            return res.end('Pause the drawing before cancelling it');
+        }
+        if (plot.timer) clearInterval(plot.timer);
+        plot = null;
+        state.resuming = false;
+        state.resumePercent = -1;
+        setPhase('SetTopDistance');
+        console.log('  drawing cancelled');
+        return json(res, stateDocument());
+    }
+
     if (p === '/confirmPenSwap') {
         if (plot) { plot.awaitingSwap = false; broadcast('progress', progressPayload()); }
         return json(res, stateDocument());

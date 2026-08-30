@@ -237,6 +237,12 @@ bool Runner::initTaskProvider() {
     executedLines = 0;
     progress = -1; // so 0% appears right away
 
+    // Start measuring moves from where the pen actually is. getNextTask() costs
+    // each movement task as the distance from the previous target, so leaving
+    // this at its default would charge the first move a meaningless distance and
+    // peg progress at 100% for the rest of the plot.
+    targetPosition = startPosition;
+
     auto homeCoordinates = movement->getHomeCoordinates();
     finishingSequence[0] = new InterpolatingMovementTask(movement, pen, homeCoordinates);
     return true;
@@ -353,6 +359,9 @@ Task *Runner::getNextTask()
         if (sequenceIx < (end(finishingSequence) - begin(finishingSequence))) {
             auto currentIx = sequenceIx;
             sequenceIx = sequenceIx + 1;
+            // The finishing move home is not part of the scanned estimate, so it
+            // costs nothing rather than inheriting the previous task's time.
+            pendingTaskSeconds = 0;
             return finishingSequence[currentIx];
         } else {
             // Drawing completed successfully - clear the checkpoint and tell any
@@ -405,6 +414,12 @@ void Runner::run()
             // The in-flight task just finished - safe to pause here without cutting
             // a movement short. Lift the pen and stop feeding new tasks from the
             // file; resumeRun() picks up from here.
+            //
+            // Credit it before returning: isDone() is true, so the work really is
+            // done, and resumeRun() overwrites pendingTaskSeconds when it fetches
+            // the next task - so skipping this simply loses that task's time.
+            completedSeconds += pendingTaskSeconds;
+            pendingTaskSeconds = 0;
             penWasDownAtPause = pen->isDown();
             pen->slowUp();
             display->displayText("Paused");
@@ -447,6 +462,31 @@ void Runner::pause() {
         return;
     }
     pauseRequested = true;
+}
+
+// Abandon the plot outright. Deliberately only callable while paused: the pen is
+// on the wall mid-stroke otherwise, and pausing already lifts it and brings the
+// machine to a clean stop. Clearing the checkpoint is what distinguishes this
+// from a pause - without it the abandoned job would be offered for resume on the
+// next boot, which is precisely what the user just declined.
+bool Runner::cancelRun() {
+    if (!paused) {
+        return false;
+    }
+
+    if (pen->isDown()) {
+        pen->slowUp();
+    }
+
+    clearCheckpoint();
+    stopped = true;
+    paused = false;
+    pauseRequested = false;
+
+    Serial.println("Drawing cancelled");
+    display->displayText("Cancelled");
+    pushProgressEvent(true, "cancelled");
+    return true;
 }
 
 bool Runner::isPaused() {

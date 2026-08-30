@@ -446,7 +446,10 @@
           </div>
         </div>
         <button class="w-100 btn btn-lg btn-warning mb-2" id="pauseDrawingBtn">Pause drawing</button>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="resumeDrawingBtn" style="display:none;">Resume</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="resumeDrawingBtn" style="display:none;">Resume</button>
+        <!-- Only offered while paused: cancelling mid-stroke would leave the pen on
+             the wall, and pausing already lifts it and stops cleanly. -->
+        <button class="w-100 btn btn-lg btn-outline-danger mb-5" id="cancelDrawingBtn" style="display:none;">Cancel this drawing</button>
 
         <!-- Shown when the plot finishes. Mural reboots straight after the final
              progress event (Runner::getNextTask calls ESP.restart), so this
