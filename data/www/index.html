@@ -143,6 +143,10 @@
         <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg">
         <button class="w-100 btn btn-lg btn-primary mb-6" id="preview" disabled>Preview drawing</button>
         <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="installTestPatternButton">Draw calibration test pattern</button>
+        <!-- Only shown when the device still holds a command file (state.hasCommands).
+             Mural restarts after every plot, so re-plotting the same image would
+             otherwise mean re-uploading it. -->
+        <button class="w-100 btn btn-lg btn-primary mb-5" id="useStoredCommandsButton" style="display:none;">Plot the image already on Mural</button>
         <hr class="my-4">
         <h6 class="mb-2"><small class="text-muted">Or re-upload a previously saved command file</small></h6>
         <input class="form-control form-control-lg mb-2" id="uploadCommandsFile" type="file" accept=".txt,.commands">
@@ -412,6 +416,20 @@
         </div>
         <button class="w-100 btn btn-lg btn-warning mb-2" id="pauseDrawingBtn">Pause drawing</button>
         <button class="w-100 btn btn-lg btn-primary mb-5" id="resumeDrawingBtn" style="display:none;">Resume</button>
+
+        <!-- Shown when the plot finishes. Mural reboots straight after the final
+             progress event (Runner::getNextTask calls ESP.restart), so this
+             waits for the device to answer again before offering any action
+             that needs it, rather than assuming a fixed delay. -->
+        <div id="drawingFinishedPanel" style="display:none;">
+          <div class="alert alert-success mb-3" id="drawingFinishedSummary">Drawing complete.</div>
+          <div class="alert alert-warning mb-3" id="finishedReconnectNotice">
+            Mural restarts after a plot &mdash; waiting for it to come back&hellip;
+          </div>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="plotAgainBtn" disabled>Plot this again</button>
+          <button class="w-100 btn btn-lg btn-secondary mb-2" id="newImageBtn" disabled>Plot a new image</button>
+          <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="downloadFinishedCommands">Download command file</button>
+        </div>
       </div>
       <div id="resumeDrawingSlide" class="muralSlide" style="display: none;">
         <div class="ui-topbar"><span class="eyebrow">Resume</span></div>

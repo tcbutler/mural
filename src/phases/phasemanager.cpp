@@ -117,6 +117,10 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     root["storedTopDistance"] = storedTopDistance;
     root["storedPenAngle"] = storedPenAngle;
     root["uploadCrc32"] = svgSelectPhase->getUploadCrc32();
+    // Whether /commands holds a previously plotted file, so the UI can offer to
+    // re-plot it instead of making the user re-upload. Survives the restart that
+    // follows every plot; uploadCrc32 does not, being in-memory.
+    root["hasCommands"] = LittleFS.exists("/commands");
     root["resuming"] = resuming;
     root["resumePercent"] = resumePercent;
     // Multi-color (docs/multi-color.md): which pen was mounted when the

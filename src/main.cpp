@@ -194,6 +194,9 @@ void setup()
     server.on("/estepsCalibrationApply", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleEstepsCalibrationApply(request); });
 
+    server.on("/useStoredCommands", HTTP_POST, [](AsyncWebServerRequest *request)
+              { phaseManager->getCurrentPhase()->useStoredCommands(request); });
+
     server.on("/installTestPattern", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->installTestPattern(request); });
 

@@ -81,6 +81,26 @@ void SvgSelectPhase::installTestPattern(AsyncWebServerRequest *request) {
     manager->respondWithState(request);
 }
 
+// Re-plot whatever is already in /commands. Mural restarts after every plot
+// (Runner::getNextTask), which drops all in-memory state but not LittleFS - so
+// the file that was just drawn is still there, and re-uploading it to draw it
+// again is pure waste. The belts still have to be re-homed, which is why this
+// advances to RetractBelts exactly like a fresh upload rather than jumping
+// straight to drawing.
+void SvgSelectPhase::useStoredCommands(AsyncWebServerRequest *request) {
+    if (!LittleFS.exists("/commands")) {
+        request->send(404, "text/plain", "No command file stored");
+        return;
+    }
+
+    // A re-plot is a new job, so any checkpoint from the previous run is stale.
+    Runner::clearCheckpoint();
+
+    Serial.println("Re-plotting the stored command file");
+    manager->setPhase(PhaseManager::RetractBelts);
+    manager->respondWithState(request);
+}
+
 const char* SvgSelectPhase::getName() {
     return "SvgSelect";
 }

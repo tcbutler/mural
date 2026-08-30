@@ -1180,6 +1180,36 @@ function init() {
         });
     });
 
+    $("#useStoredCommandsButton").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/useStoredCommands", {}, function(state) {
+            adaptToState(state);
+        }).fail(function() {
+            $("#useStoredCommandsButton").prop('disabled', false);
+            showError("Couldn't re-plot the stored image", null);
+        });
+    });
+
+    // --- End-of-plot actions ------------------------------------------------
+    // All three need the device, which has just restarted, so waitForDeviceBack()
+    // keeps the first two disabled until it answers again. Download is left
+    // enabled: it is the one action worth attempting immediately, since the
+    // browser surfaces its own failure clearly if the device is still down.
+    $("#plotAgainBtn").click(function() {
+        // The belts have to be re-homed after the restart, so this returns to the
+        // start of the wizard - the stored file is offered again at the image
+        // step via #useStoredCommandsButton rather than being re-uploaded.
+        location.reload();
+    });
+
+    $("#newImageBtn").click(function() {
+        location.reload();
+    });
+
+    $("#downloadFinishedCommands").click(function() {
+        window.location = "/downloadCommands";
+    });
+
     $("#installTestPatternButton").click(function() {
         $(".muralSlide").hide();
         $("#loadingSlide").show();
@@ -1453,6 +1483,10 @@ function adaptToState(state) {
             break;
         case "SvgSelect":
             $("#svgUploadSlide").show();
+            // Mural keeps the last command file across the restart that follows
+            // every plot, so offer to re-plot it rather than making the user
+            // upload the same image again.
+            $("#useStoredCommandsButton").toggle(!!state.hasCommands);
             break;
         case "BeginDrawing":
             $("#beginDrawingSlide").show();
@@ -1511,6 +1545,7 @@ function startLiveDrawingView() {
     $("#pauseDrawingBtn").show().prop('disabled', false).text('Pause');
     $("#resumeDrawingBtn").hide().prop('disabled', false);
     $("#penSwapPanel").hide();
+    $("#drawingFinishedPanel").hide();
     $("#liveConnectionNotice").hide();
     $("#liveProgressBar").css('width', '0%').text('0%');
     $("#liveProgressPct").text('0%');
@@ -1617,13 +1652,69 @@ function updateLiveProgress(data) {
     }
 
     if (data.state === 'finished') {
-        // The firmware restarts shortly after sending this event (see
-        // Runner::getNextTask()) - a full reload naturally picks the app back up
-        // once it's back on the network instead of leaving stale wizard state.
-        closeLiveEventSource();
-        setTimeout(() => location.reload(), 2000);
+        showDrawingFinished(data);
     }
 }
+
+// The plot is over. Mural clears its checkpoint, sends this last event and then
+// calls ESP.restart() (Runner::getNextTask), so the device is unreachable for
+// several seconds - measured at about 7.5s to "Server started", most of it the
+// WiFi connect.
+//
+// This used to be `setTimeout(() => location.reload(), 2000)`, which reloaded
+// into a device that was still booting: the request failed and the user was
+// left on a dead page with a stale "Pause" button and no way forward. Now the
+// finished state is a screen in its own right, and anything needing the device
+// stays disabled until it actually answers.
+function showDrawingFinished(data) {
+    closeLiveEventSource();
+    $("#pauseDrawingBtn").hide();
+    $("#resumeDrawingBtn").hide();
+    $("#penSwapPanel").hide();
+    $("#liveConnectionNotice").hide();
+    $("#drawingFinishedPanel").show();
+
+    if (data && typeof data.totalLines === 'number' && data.totalLines > 0) {
+        const plural = data.totalLines === 1 ? 'command' : 'commands';
+        $("#drawingFinishedSummary").text(`Drawing complete \u2014 ${data.totalLines} ${plural} plotted.`);
+    }
+
+    waitForDeviceBack();
+}
+
+// Polls until the firmware answers again, then enables the actions that need it.
+// Uses a plain fixed interval with a cap rather than backoff: the outage is
+// short and predictable, and a slow backoff would leave the buttons dead well
+// after the machine was ready.
+function waitForDeviceBack() {
+    const started = Date.now();
+    const timeoutMs = 90000;
+
+    const poll = async () => {
+        try {
+            const state = await $.get("/getState");
+            $("#finishedReconnectNotice").hide();
+            $("#plotAgainBtn").prop('disabled', false);
+            $("#newImageBtn").prop('disabled', false);
+            deviceStateAfterFinish = state;
+            return;
+        } catch (err) {
+            if (Date.now() - started > timeoutMs) {
+                $("#finishedReconnectNotice")
+                    .removeClass('alert-warning').addClass('alert-danger')
+                    .html("Mural hasn't come back after restarting. Check it has power and is on the network, " +
+                          "then <a href=\"/\">reload</a>.");
+                return;
+            }
+            setTimeout(poll, 1500);
+        }
+    };
+    // The device is definitely still up for a moment after the event, so give
+    // the restart time to actually take the server down before polling.
+    setTimeout(poll, 2500);
+}
+
+let deviceStateAfterFinish = null;
 
 function getInfillDensity() {
     const density = parseInt($("#infillDensity").val());

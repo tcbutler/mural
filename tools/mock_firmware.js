@@ -41,6 +41,9 @@ const START_PHASE = arg('phase', 'SetTopDistance');
 // is exercisable in the time it takes to click through it.
 const PLOT_SECONDS = parseFloat(arg('plotSeconds', '20'));
 const FAULTS = new Set(arg('fault', '').split(',').filter(Boolean));
+// Seconds the device is unreachable after a plot, matching the measured
+// boot-to-"Server started" time on real hardware.
+const REBOOT_SECONDS = parseFloat(arg('rebootSeconds', '7.5'));
 
 const KNOWN_FAULTS = {
     'crc-mismatch': 'upload verification fails (firmware reports a different CRC32)',
@@ -104,9 +107,23 @@ if (FAULTS.has('resume')) {
     state.resumeColorName = 'black';
 }
 
-let commandsFile = null;   // Buffer of the uploaded command file
+// Phases from RetractBelts onward only exist because a command file was
+// selected, so starting at one has to imply that file, or the mock contradicts
+// itself (a "ready to draw" screen with nothing to draw).
+const PHASES_IMPLYING_COMMANDS = ['RetractBelts', 'ExtendToHome', 'PenCalibration', 'BeginDrawing', 'Drawing', 'ResumeDrawing'];
+let commandsFile = PHASES_IMPLYING_COMMANDS.includes(START_PHASE)
+    ? Buffer.from('d1000\nh600\np0\n150 150\np1\n450 150\n450 450\np0\n', 'utf8')
+    : null;
+let rebootingUntil = 0;    // while > now, the device refuses connections
 let plot = null;           // active simulated plot, see startPlot()
 const sseClients = new Set();
+
+// PhaseManager::respondWithState reports hasCommands from LittleFS.exists(),
+// so derive it here too rather than keeping a flag that could disagree with
+// whether a command file is actually present.
+function stateDocument() {
+    return { ...state, hasCommands: commandsFile !== null };
+}
 
 function setPhase(next) {
     if (state.phase !== next) console.log(`  phase: ${state.phase} -> ${next}`);
@@ -212,6 +229,27 @@ function startPlot() {
             plot.stopped = true;
             clearInterval(plot.timer);
             console.log('  plot finished');
+            broadcast('progress', progressPayload());
+            // The firmware clears its checkpoint, pushes this final event and
+            // then calls ESP.restart() (Runner::getNextTask). Boot to "Server
+            // started" measured ~7.5s on real hardware, mostly WiFi. Model both
+            // the reboot and the outage, because the UI's behaviour on finish is
+            // entirely about surviving them.
+            console.log(`  restarting (unreachable for ${REBOOT_SECONDS}s)`);
+            // The firmware sends the final event, waits 200ms, THEN restarts -
+            // that delay is load-bearing, and dropping the sockets immediately
+            // here swallowed the "finished" event before it flushed.
+            setTimeout(() => {
+                rebootingUntil = Date.now() + REBOOT_SECONDS * 1000;
+                for (const res of sseClients) { try { res.destroy(); } catch {} }
+                sseClients.clear();
+            }, 200);
+            setTimeout(() => {
+                plot = null;   // commandsFile survives, as LittleFS would
+                setPhase('SetTopDistance');
+                console.log('  back up');
+            }, (REBOOT_SECONDS + 0.2) * 1000);
+            return;
         }
         broadcast('progress', progressPayload());
     }, tickMs);
@@ -272,6 +310,12 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     const body = req.method === 'POST' ? await readBody(req) : Buffer.alloc(0);
 
+    // While rebooting, drop the connection outright rather than erroring - a
+    // device that is off does not answer, and the UI has to cope with that.
+    if (Date.now() < rebootingUntil) {
+        return req.socket.destroy();
+    }
+
     if (req.method === 'POST') console.log(`POST ${p}`);
 
     // --- Server-sent events (Runner::pushProgressEvent) -------------------
@@ -288,12 +332,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- State ------------------------------------------------------------
-    if (p === '/getState') return json(res, state);
+    if (p === '/getState') return json(res, stateDocument());
 
     if (p === '/getPhysicsConstants') {
         return json(res, { diameter: 12.69, homeOffsetMM: 100, massBot: 0.5, beltElong: 0.0001 });
     }
-    if (p === '/setPhysicsConstants') return json(res, state);
+    if (p === '/setPhysicsConstants') return json(res, stateDocument());
 
     // --- Setup phases -----------------------------------------------------
     if (p === '/setTopDistance') {
@@ -304,7 +348,7 @@ const server = http.createServer(async (req, res) => {
             state.safeWidth = Math.round(v * 0.6);
         }
         setPhase('SvgSelect');
-        return json(res, state);
+        return json(res, stateDocument());
     }
 
     if (p === '/command') {
@@ -320,13 +364,32 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/doneWithPhase') {
         if (state.phase === 'RetractBelts') setPhase('ExtendToHome');
-        else if (state.phase === 'ExtendToHome') {
-            setPhase(state.storedPenAngle >= 0 ? 'BeginDrawing' : 'PenCalibration');
-        }
-        return json(res, state);
+        return json(res, stateDocument());
     }
 
-    if (p === '/extendToHome') { state.moving = false; return json(res, state); }
+    if (p === '/extendToHome') {
+        // ExtendToHomePhase::extendToHome replies with the estimated move time in
+        // SECONDS as plain text - not a state document - and the phase only
+        // advances later, from loopPhase(), once the move actually finishes. The
+        // UI leans on exactly that: it disables the button, waits the reported
+        // time, then polls /getState until the phase changes
+        // (checkIfExtendedToHome in main.js). Returning JSON here instead left
+        // the UI polling a phase that never changed, with every control
+        // disabled - a dead end that is a mock artefact, not a UI bug.
+        const moveSeconds = 1;
+        state.moving = true;
+        setTimeout(() => {
+            state.moving = false;
+            if (state.resuming) {
+                setPhase('Drawing');
+                startPlot();
+            } else {
+                setPhase('PenCalibration');
+            }
+        }, (moveSeconds + 0.2) * 1000);
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        return res.end(String(moveSeconds));
+    }
 
     if (p === '/setServo') return ok(res);
 
@@ -334,16 +397,16 @@ const server = http.createServer(async (req, res) => {
         const v = parseInt(firstParam(url, body), 10);
         if (Number.isFinite(v)) state.storedPenAngle = v;
         setPhase('BeginDrawing');
-        return json(res, state);
+        return json(res, stateDocument());
     }
 
-    if (p === '/estepsCalibration' || p === '/estepsCalibrationApply') return json(res, state);
+    if (p === '/estepsCalibration' || p === '/estepsCalibrationApply') return json(res, stateDocument());
 
     if (p === '/installTestPattern') {
         commandsFile = Buffer.from('d1000\nM400 300\nD\nM100 100\nU\n', 'utf8');
         state.uploadCrc32 = crc32(commandsFile);
         setPhase('RetractBelts');
-        return json(res, state);
+        return json(res, stateDocument());
     }
 
     // --- Command file -----------------------------------------------------
@@ -355,12 +418,24 @@ const server = http.createServer(async (req, res) => {
         }
         commandsFile = extractMultipartFile(body);
         state.uploadCrc32 = crc32(commandsFile);
-        if (FAULTS.has('crc-mismatch')) {
+                if (FAULTS.has('crc-mismatch')) {
             console.log('  fault: reporting a wrong CRC32');
             state.uploadCrc32 = (state.uploadCrc32 ^ 0xFFFF) >>> 0;
         }
         setPhase('RetractBelts');
-        return json(res, state);
+        return json(res, stateDocument());
+    }
+
+    if (p === '/useStoredCommands') {
+        // SvgSelectPhase::useStoredCommands - re-plot the file already on the
+        // device. Still routes through RetractBelts, because the belts have to be
+        // re-homed after the restart that follows every plot.
+        if (!commandsFile) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            return res.end('No command file stored');
+        }
+        setPhase('RetractBelts');
+        return json(res, stateDocument());
     }
 
     if (p === '/downloadCommands') {
@@ -370,25 +445,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- Drawing ----------------------------------------------------------
-    if (p === '/run') { startPlot(); return json(res, state); }
+    if (p === '/run') { startPlot(); return json(res, stateDocument()); }
 
     if (p === '/pauseDrawing') {
         if (plot) { plot.paused = true; broadcast('progress', progressPayload()); }
-        return json(res, state);
+        return json(res, stateDocument());
     }
     if (p === '/resumeDrawing') {
         if (plot) { plot.paused = false; plot.stalled = false; broadcast('progress', progressPayload()); }
-        return json(res, state);
+        return json(res, stateDocument());
     }
     if (p === '/confirmPenSwap') {
         if (plot) { plot.awaitingSwap = false; broadcast('progress', progressPayload()); }
-        return json(res, state);
+        return json(res, stateDocument());
     }
     if (p === '/resume' || p === '/confirmResume') {
         state.resuming = false;
         state.resumePercent = -1;
         setPhase('RetractBelts');
-        return json(res, state);
+        return json(res, stateDocument());
     }
 
     // --- Static files -----------------------------------------------------
@@ -403,6 +478,16 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
         res.end(data);
     });
+});
+
+server.on('error', err => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use - another mock is probably still running.`);
+        console.error(`  lsof -ti :${PORT} | xargs kill      # stop it`);
+        console.error(`  node tools/mock_firmware.js --port=${PORT + 1}   # or use another port`);
+        process.exit(1);
+    }
+    throw err;
 });
 
 server.listen(PORT, () => {
