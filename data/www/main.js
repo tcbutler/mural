@@ -410,6 +410,7 @@ async function pollRetractStatus() {
             }
             setRetractStatusUI('left', state.leftRetract || 'idle');
             setRetractStatusUI('right', state.rightRetract || 'idle');
+            renderMotorsFree(state);
         } catch (err) {
             // Transient failure - keep polling. The manual "Belts are
             // retracted" fallback button doesn't depend on this loop.
@@ -1274,6 +1275,22 @@ function init() {
     // Pen swap: releasing the pen needs the calibrated unlock angle, so this only
     // appears once the holder has actually been calibrated (unlocked above the
     // highest locked angle - equal means "no separate release position known").
+    // Release/hold the belts for manual retraction. The button reflects the
+    // firmware's own motorsFree flag rather than a local toggle, so a reload can
+    // never show "released" for motors that are actually holding, or the reverse.
+    $("#freeMotorsBtn").click(function() {
+        const releasing = !(currentState && currentState.motorsFree);
+        $(this).prop('disabled', true);
+        $.post("/setMotorsFree", { free: releasing ? 1 : 0 }, function(state) {
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $("#freeMotorsBtn").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Motors can only be released while retracting the belts"
+                : "Couldn't change motor state", null);
+        });
+    });
+
     $("#penSwapUnlockBtn").click(function() {
         $.post("/unlockPen", {}).fail(function(xhr) {
             showError(xhr.status === 409
@@ -1606,6 +1623,7 @@ function adaptToState(state) {
             $("#manualRetractHint").toggle(!!state.autoRetract);
             setRetractStatusUI('left', state.leftRetract || 'idle');
             setRetractStatusUI('right', state.rightRetract || 'idle');
+            renderMotorsFree(state);
             pollRetractStatus();
             break;
         case "SetTopDistance":
@@ -2498,6 +2516,23 @@ function renderDefaultPenTypeSelect() {
     if (current) {
         select.val(current);
     }
+}
+
+// Reflects the firmware's motorsFree flag on the retract screen. While released,
+// the jog controls are disabled: with no drive current they would silently do
+// nothing, which reads as broken rather than as a mode you are in.
+function renderMotorsFree(state) {
+    const free = !!(state && state.motorsFree);
+    $("#freeMotorsBtn")
+        .prop('disabled', false)
+        .text(free ? 'Hold motors' : 'Release motors (pull belts by hand)')
+        .toggleClass('btn-outline-secondary', !free)
+        .toggleClass('btn-warning', free);
+    $("#motorsFreeWarning").toggle(free);
+    // The retract screen's own jog switches - not the tools-panel sliders, which
+    // belong to a different screen and a different situation.
+    $("#leftMotorToggle, #rightMotorToggle").prop('disabled', free);
+    $("#beltsRetracted").prop('disabled', free);
 }
 
 function getPenSwapServoValueFromInputValue() {

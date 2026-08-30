@@ -49,6 +49,15 @@
           <input class="form-check-input" type="checkbox" role="switch" id="rightMotorToggle">
           <label class="form-check-label" for="rightMotorToggle">Right motor</label>
         </div>
+        <!-- Manual retraction aid: with the belts fully out, the steppers hold too
+             firmly to pull the belt through by hand, so retraction otherwise means
+             jogging the whole length at motor speed. -->
+        <div class="alert alert-warning py-2 mb-2" id="motorsFreeWarning" style="display:none;">
+          Motors are released &mdash; the belts will run out freely and Mural will not
+          hold itself up. Only do this with the machine resting or supported. Press
+          <b>Hold motors</b> before jogging or continuing.
+        </div>
+        <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="freeMotorsBtn">Release motors (pull belts by hand)</button>
         <button class="w-100 btn btn-lg btn-primary mb-5" id="beltsRetracted">Belts are retracted</button>
       </div>
       <div id="distanceBetweenAnchorsSlide" class="muralSlide" style="display:none;">

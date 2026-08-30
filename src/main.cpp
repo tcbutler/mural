@@ -72,6 +72,39 @@ void handleSetPhysicsConstants(AsyncWebServerRequest *request) {
     handleGetPhysicsConstants(request);
 }
 
+// --- Free the belts for manual retraction ----------------------------------
+//
+// With the belts fully extended - a machine that lost power and slumped down the
+// wall - the steppers hold hard enough that the belt cannot be pulled through by
+// hand, so retraction means jogging the entire length at motor speed. Cutting
+// drive current lets the slack be pulled in by hand, then restored to finish
+// under motor control.
+//
+// Restricted to the RetractBelts phase on purpose. Releasing the motors drops
+// whatever the belts are holding and loses any established position - during
+// RetractBelts nothing has been homed yet, so there is no position to lose, and
+// the machine is expected to be slack or supported. Anywhere later it would be a
+// way to make the bot fall off the wall.
+void handleSetMotorsFree(AsyncWebServerRequest *request) {
+    if (strcmp(phaseManager->getCurrentPhase()->getName(), "RetractBelts") != 0) {
+        request->send(409, "text/plain", "Motors can only be released while retracting the belts");
+        return;
+    }
+    if (!request->hasParam("free", true)) {
+        request->send(400, "text/plain", "Missing free");
+        return;
+    }
+
+    const String value = request->getParam("free", true)->value();
+    if (value == "1" || value == "true") {
+        movement->releaseMotors();
+    } else {
+        movement->holdMotors();
+    }
+
+    phaseManager->respondWithState(request);
+}
+
 // --- Pen holder calibration ------------------------------------------------
 //
 // Machine geometry rather than per-plot setup, so these are registered directly
@@ -299,6 +332,9 @@ void setup()
 
     server.on("/estepsCalibrationApply", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleEstepsCalibrationApply(request); });
+
+    server.on("/setMotorsFree", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleSetMotorsFree(request); });
 
     server.on("/getPenLimits", HTTP_GET, [](AsyncWebServerRequest *request)
               { handleGetPenLimits(request); });

@@ -120,6 +120,8 @@ let rebootingUntil = 0;    // while > now, the device refuses connections
 // firmware's, i.e. an uncalibrated machine.
 let penLimits = { lowestLocked: 0, highestLocked: 90, unlocked: 90 };
 let penAngle = 90;
+// Movement::areMotorsReleased - drive current cut so belts pull by hand.
+let motorsFree = false;
 let plot = null;           // active simulated plot, see startPlot()
 const sseClients = new Set();
 
@@ -133,6 +135,7 @@ function stateDocument() {
         penLowestLocked: penLimits.lowestLocked,
         penHighestLocked: penLimits.highestLocked,
         penUnlocked: penLimits.unlocked,
+        motorsFree,
     };
 }
 
@@ -373,8 +376,26 @@ const server = http.createServer(async (req, res) => {
         return ok(res);
     }
 
+    if (p === '/setMotorsFree') {
+        // handleSetMotorsFree: only while retracting, since releasing the motors
+        // anywhere later would drop the machine.
+        if (state.phase !== 'RetractBelts') {
+            res.writeHead(409, {'Content-Type':'text/plain'});
+            return res.end('Motors can only be released while retracting the belts');
+        }
+        const v = firstParam(url, body);
+        motorsFree = (v === '1' || v === 'true');
+        console.log(`  motors ${motorsFree ? 'released' : 'holding'}`);
+        return json(res, stateDocument());
+    }
+
     if (p === '/doneWithPhase') {
-        if (state.phase === 'RetractBelts') setPhase('ExtendToHome');
+        if (state.phase === 'RetractBelts') {
+            // RetractBeltsPhase::doneWithPhase restores drive current on the way
+            // out, rather than trusting the UI to have toggled it back.
+            motorsFree = false;
+            setPhase('ExtendToHome');
+        }
         return json(res, stateDocument());
     }
 

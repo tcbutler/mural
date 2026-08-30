@@ -128,6 +128,10 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     root["penLowestLocked"] = pen->getLowestLocked();
     root["penHighestLocked"] = pen->getHighestLocked();
     root["penUnlocked"] = pen->getUnlockedAngle();
+    // Whether drive current is currently cut so the belts can be pulled by hand
+    // (see handleSetMotorsFree). The UI reflects this rather than tracking it
+    // locally, so a reload cannot show the wrong state for something physical.
+    root["motorsFree"] = movement->areMotorsReleased();
     root["resuming"] = resuming;
     root["resumePercent"] = resumePercent;
     // Multi-color (docs/multi-color.md): which pen was mounted when the

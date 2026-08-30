@@ -153,6 +153,8 @@ private:
     // Values derived from the physics constants above.
     double circumference;   // [mm] = diameter * PI
     int homedStepsOffset;   // [steps]
+    // True while drive current is cut so the belts can be pulled by hand.
+    bool motorsReleased = false;
 
     long lastEstepsCalibrationSteps = 0; // Steps commanded by the last extend1000mm() call, used to
                                           // convert a user-measured travel distance back into diameter.
@@ -215,6 +217,20 @@ public:
 
     Point getHomeCoordinates();
     void disableMotors();
+
+    // Belt-retraction helper: cut drive current so the belts can be pulled in by
+    // hand, then restore it to finish precisely under motor control.
+    //
+    // Careful with AccelStepper's naming here - it is inverted relative to the
+    // physical effect on this hardware. The TMC2209's EN input is active-LOW and
+    // _enableInverted is never set, so AccelStepper::disableOutputs() writes EN
+    // LOW and ENERGISES the driver, while enableOutputs() writes EN HIGH and
+    // releases it. That is why the constructor "disables" both motors to make
+    // them hold, and why nothing in this file ever calls enableOutputs(). These
+    // two wrappers are named for what actually happens to the motors.
+    void releaseMotors();
+    void holdMotors();
+    bool areMotorsReleased() const { return motorsReleased; }
 
     // Runtime-configurable physics constants (see KinematicModel.md).
     double getMassBot();

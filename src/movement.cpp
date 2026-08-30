@@ -528,6 +528,24 @@ void Movement::disableMotors() {
     rightMotor->disableOutputs();
 }
 
+void Movement::releaseMotors() {
+    // See the header: enableOutputs() writes EN HIGH, which switches the
+    // active-low driver OFF and lets the belts be pulled through by hand.
+    leftStepper(0);
+    rightStepper(0);
+    leftMotor->enableOutputs();
+    rightMotor->enableOutputs();
+    motorsReleased = true;
+    Serial.println("Motors released - belts can be pulled by hand");
+}
+
+void Movement::holdMotors() {
+    leftMotor->disableOutputs();
+    rightMotor->disableOutputs();
+    motorsReleased = false;
+    Serial.println("Motors holding");
+}
+
 bool Movement::isMoving() {
     return moving;
 }
