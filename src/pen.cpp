@@ -1,4 +1,6 @@
 #include "pen.h"
+#include "prefskeys.h"
+#include <Preferences.h>
 #include <stdexcept>
 
 bool shouldStop(int currentDegree, int targetDegree, bool positive) {
@@ -75,12 +77,76 @@ static_assert(penValueToDuty(300) == 122, "angles above 180 clamp to duty 122");
 // See docs/pen-servo.md for the analysis and the hardware parity measurements.
 Pen::Pen()
 {
+    loadLimits();
+
     if (!ledcAttach(PEN_SERVO_PIN, PEN_SERVO_FREQ_HZ, PEN_SERVO_TIMER_BITS)) {
         Serial.println("ERROR: pen servo PWM failed to attach on pin " + String(PEN_SERVO_PIN) +
                        " - the pen will not move");
         return;
     }
-    setRawValue(90);
+    // Park at the calibrated "up" angle rather than a hardcoded 90: on an
+    // uncalibrated machine these are the same, and on a calibrated one this is
+    // the position that actually lifts the nib clear while still holding the pen.
+    setRawValue(highestLocked);
+}
+
+bool Pen::limitsAreValid(int lowest, int highest, int unlocked) {
+    // Higher angle lifts the pen. The release position is at or above the
+    // highest locked angle - equal meaning "not separately calibrated".
+    return lowest >= 0 && lowest < highest && highest <= unlocked && unlocked <= 180;
+}
+
+void Pen::loadLimits() {
+    Preferences prefs;
+    prefs.begin(PREFS_NAMESPACE, true);
+    const int lowest = prefs.getInt(PREFS_PEN_LOWEST_KEY, PEN_DEFAULT_LOWEST_LOCKED);
+    const int highest = prefs.getInt(PREFS_PEN_HIGHEST_KEY, PEN_DEFAULT_HIGHEST_LOCKED);
+    const int unlocked = prefs.getInt(PREFS_PEN_UNLOCKED_KEY, PEN_DEFAULT_UNLOCKED);
+    prefs.end();
+
+    if (!limitsAreValid(lowest, highest, unlocked)) {
+        Serial.println("Stored pen limits are invalid (" + String(lowest) + "/" + String(highest) +
+                       "/" + String(unlocked) + ") - falling back to defaults");
+        return;
+    }
+
+    lowestLocked = lowest;
+    highestLocked = highest;
+    unlockedAngle = unlocked;
+    Serial.println("Pen limits: lowest " + String(lowestLocked) + ", highest " + String(highestLocked) +
+                   ", unlocked " + String(unlockedAngle));
+}
+
+bool Pen::setLimits(int lowest, int highest, int unlocked) {
+    if (!limitsAreValid(lowest, highest, unlocked)) {
+        return false;
+    }
+
+    lowestLocked = lowest;
+    highestLocked = highest;
+    unlockedAngle = unlocked;
+
+    // An existing contact point calibrated against the old limits may now sit
+    // outside them, which would drive the pen past the holder on the next
+    // stroke. Pull it back into range rather than leaving it stale.
+    if (penDistance != -1) {
+        if (penDistance < lowestLocked) {
+            penDistance = lowestLocked;
+        } else if (penDistance > highestLocked) {
+            penDistance = highestLocked;
+        }
+    }
+
+    Preferences prefs;
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.putInt(PREFS_PEN_LOWEST_KEY, lowestLocked);
+    prefs.putInt(PREFS_PEN_HIGHEST_KEY, highestLocked);
+    prefs.putInt(PREFS_PEN_UNLOCKED_KEY, unlockedAngle);
+    prefs.end();
+
+    Serial.println("Pen limits set: lowest " + String(lowestLocked) + ", highest " +
+                   String(highestLocked) + ", unlocked " + String(unlockedAngle));
+    return true;
 }
 
 void Pen::setRawValue(int rawValue) {
@@ -102,8 +168,14 @@ bool Pen::slowUp() {
         return false;
     }
 
-    doSlowMove(this, currentPosition, 90, slowSpeedDegPerSec);
-    currentPosition = 90;
+    doSlowMove(this, currentPosition, highestLocked, slowSpeedDegPerSec);
+    currentPosition = highestLocked;
+    return true;
+}
+
+bool Pen::slowUnlock() {
+    doSlowMove(this, currentPosition, unlockedAngle, slowSpeedDegPerSec);
+    currentPosition = unlockedAngle;
     return true;
 }
 
@@ -112,13 +184,30 @@ bool Pen::slowDown() {
         return false;
     }
 
-    doSlowMove(this, currentPosition, penDistance, slowSpeedDegPerSec);
-    currentPosition = penDistance;
+    const int target = clampedDownAngle();
+    doSlowMove(this, currentPosition, target, slowSpeedDegPerSec);
+    currentPosition = target;
     return true;
 }
 
+int Pen::clampedDownAngle() const {
+    // The contact point is calibrated per pen; the holder geometry decides how
+    // far the servo may actually travel.
+    if (penDistance < lowestLocked) {
+        return lowestLocked;
+    }
+    if (penDistance > highestLocked) {
+        return highestLocked;
+    }
+    return penDistance;
+}
+
 bool Pen::isDown() {
-    return currentPosition == penDistance;
+    // Compares against the angle slowDown() actually drives to. Comparing with
+    // the raw penDistance would report "not down" whenever the calibrated
+    // contact point had to be clamped, which in turn would make movement tasks
+    // pick the fast travel speed for a stroke that is drawing on the wall.
+    return penDistance != -1 && currentPosition == clampedDownAngle();
 }
 
 double Pen::estimateMoveSeconds() const {
@@ -127,6 +216,6 @@ double Pen::estimateMoveSeconds() const {
     }
     // doSlowMove() ramps from one angle to the other at slowSpeedDegPerSec and
     // then settles for a fixed 200ms.
-    const int sweepDegrees = abs(90 - penDistance);
+    const int sweepDegrees = abs(highestLocked - penDistance);
     return (double)sweepDegrees / (double)slowSpeedDegPerSec + 0.2;
 }

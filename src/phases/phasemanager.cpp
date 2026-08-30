@@ -26,6 +26,7 @@ PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner) {
     resumeDrawingPhase = new ResumeDrawingPhase(this, movement, pen);
 
     this->movement = movement;
+    this->pen = pen;
     reset();
 }
 
@@ -121,6 +122,12 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     // re-plot it instead of making the user re-upload. Survives the restart that
     // follows every plot; uploadCrc32 does not, being in-memory.
     root["hasCommands"] = LittleFS.exists("/commands");
+    // Calibrated pen-holder geometry (see prefskeys.h). The UI needs these to
+    // bound its own sliders: the contact point must stay inside the locked
+    // range, and the release position sits above it.
+    root["penLowestLocked"] = pen->getLowestLocked();
+    root["penHighestLocked"] = pen->getHighestLocked();
+    root["penUnlocked"] = pen->getUnlockedAngle();
     root["resuming"] = resuming;
     root["resumePercent"] = resumePercent;
     // Multi-color (docs/multi-color.md): which pen was mounted when the

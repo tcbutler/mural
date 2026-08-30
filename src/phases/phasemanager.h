@@ -19,6 +19,8 @@ class PhaseManager {
     Phase* drawingPhase;
     Phase* resumeDrawingPhase;
     Movement* movement;
+    // Kept so respondWithState can report the calibrated pen-holder geometry.
+    Pen* pen;
 
     // True from the moment a resumable checkpoint is offered (see reset()) until
     // either the offer is discarded or the resume flow hands off to the Drawing

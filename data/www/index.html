@@ -418,6 +418,10 @@
                 <button type="button" class="btn btn-primary fs-4" id="penSwapPlus">+</button>
               </div>
             </div>
+            <!-- Drives to the calibrated release angle so the old pen can be taken
+                 out and the new one seated. Only useful once the holder has been
+                 calibrated in the tools panel, so it hides until then. -->
+            <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="penSwapUnlockBtn" style="display:none;">Release pen for swapping</button>
             <button class="w-100 btn btn-lg btn-success" id="confirmPenSwapBtn">Pen inserted, continue</button>
           </div>
         </div>
@@ -488,6 +492,50 @@
         <label for="rightMotorTool" class="form-label">Right Motor</label>
         <input type="range" class="form-range mb-5 text-center" min="-1" max="1" id="rightMotorTool" value="0">
         <button class="w-100 btn btn-lg btn-primary mb-5" id="parkServoTool">Park Servo</button>
+        <hr>
+        <!-- Pen-holder geometry. Machine setup, not per-plot: the holder is a cam,
+             so there is a range of angles over which the pen is actually retained,
+             and a little past the top is where it can be lifted out. The drawing
+             contact point (the wizard's pen calibration step) lives between the two
+             locked limits. -->
+        <h6 class="mb-2">Pen holder calibration</h6>
+        <h6 class="mb-3"><small class="text-muted">
+          Jog the servo and record three positions. Higher angles raise the pen.
+          Record the <b>lowest</b> and <b>highest</b> angles at which the pen is still
+          held, then the <b>unlocked</b> angle where it can be lifted out &mdash; usually
+          only a few degrees above the highest. Going much further risks the mechanism
+          not re-engaging the holder when a pen is put back.
+        </small></h6>
+        <label for="penCalRange" class="form-label mb-0">Servo angle: <span id="penCalAngle">90</span>&deg;</label>
+        <input type="range" class="form-range mb-2 text-center" min="0" max="180" step="1" id="penCalRange" value="90">
+        <div class="btn-group mb-3 btn-group-lg w-100" role="group">
+          <button type="button" class="btn btn-outline-secondary" id="penCalMinus5">&minus;5</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalMinus1">&minus;1</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalPlus1">+1</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalPlus5">+5</button>
+        </div>
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td>Lowest locked</td>
+              <td><span id="penCalLowestVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordLowest">Record</button></td>
+            </tr>
+            <tr>
+              <td>Highest locked</td>
+              <td><span id="penCalHighestVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordHighest">Record</button></td>
+            </tr>
+            <tr>
+              <td>Unlocked (load pen)</td>
+              <td><span id="penCalUnlockedVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordUnlocked">Record</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="alert alert-warning py-2 mb-2" id="penCalWarning" style="display:none;"></div>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="penCalSave">Save pen limits</button>
+        <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="penCalUnlockNow">Move to unlocked (load a pen)</button>
         <button class="w-100 btn btn-lg btn-primary mb-2" id="estepsTool">Extend 1000mm (E-steps calibration)</button>
         <label for="estepsMeasuredInput" class="form-label">Measured travel (mm)</label>
         <div class="input-group mb-5">

@@ -6,6 +6,41 @@ import { estimatePenUsage, loadPenCapacities, resetPenCapacities, savePenCapacit
 
 let currentState = null;
 
+// Calibrated pen-holder geometry, mirrored from the state document. Every pen
+// slider is inverted so dragging right lowers the pen, and spans the locked
+// range rather than a hardcoded 0-90 - that hardcoded ceiling is what stopped a
+// release position above 90 from ever being reachable. The defaults reproduce
+// the previous behaviour on a machine that has not been calibrated yet.
+let penLimits = { lowestLocked: 0, highestLocked: 90, unlocked: 90 };
+
+function invertWithinLockedRange(sliderValue) {
+    const { lowestLocked: lo, highestLocked: hi } = penLimits;
+    const value = hi + lo - sliderValue;
+    if (value < lo) {
+        return lo;
+    }
+    if (value > hi) {
+        return hi;
+    }
+    return value;
+}
+
+// Points every pen slider at the calibrated locked range. Called whenever a
+// state document arrives, since the limits can change from the tools panel
+// while the wizard is open.
+function applyPenLimitsToSliders(state) {
+    if (!state || typeof state.penHighestLocked !== 'number') {
+        return;
+    }
+    penLimits = {
+        lowestLocked: state.penLowestLocked,
+        highestLocked: state.penHighestLocked,
+        unlocked: state.penUnlocked,
+    };
+    $("#servoRange, #penSwapServoRange, #resumePenRange")
+        .attr({ min: penLimits.lowestLocked, max: penLimits.highestLocked });
+}
+
 let currentWorker = null;
 
 // Multi-color (docs/multi-color.md). Palette entries the user has
@@ -482,18 +517,7 @@ function init() {
     });
     
     function getServoValueFromInputValue() {
-        const inputValue = parseInt($("#servoRange").val());
-        const value = 90 - inputValue;
-        let normalizedValue;
-        if (value < 0) {
-            normalizedValue = 0;
-        } else if (value > 90) {
-            normalizedValue = 90;
-        } else {
-            normalizedValue = value;
-        }
-
-        return normalizedValue;
+        return invertWithinLockedRange(parseInt($("#servoRange").val()));
     }
 
     $("#servoRange").on('input', $.throttle(250, function (e) {
@@ -1180,6 +1204,144 @@ function init() {
         });
     });
 
+    // --- Pen holder calibration (tools panel) -------------------------------
+    //
+    // Records the three angles that describe the holder: the lowest and highest
+    // at which the pen is retained, and the release angle just above them. The
+    // jog here is deliberately the raw servo angle over the full 0-180 range,
+    // not the wizard's inverted 0-90 slider - that mapping (90 - value, clamped
+    // to 90) is precisely what made a release position above 90 unreachable, so
+    // calibrating through it would be impossible.
+    let penCalLimits = { lowestLocked: null, highestLocked: null, unlocked: null };
+
+    function penCalAngle() {
+        return parseInt($("#penCalRange").val(), 10);
+    }
+
+    function renderPenCalLimits() {
+        const show = v => (typeof v === 'number' ? v : '\u2014');
+        $("#penCalLowestVal").text(show(penCalLimits.lowestLocked));
+        $("#penCalHighestVal").text(show(penCalLimits.highestLocked));
+        $("#penCalUnlockedVal").text(show(penCalLimits.unlocked));
+
+        const { lowestLocked: lo, highestLocked: hi, unlocked: un } = penCalLimits;
+        const complete = lo !== null && hi !== null && un !== null;
+
+        // Ordering errors block saving - they would drive the servo somewhere
+        // the holder cannot take. Being a long way past the holder is only a
+        // warning: it is the user's mechanism, and they can see it.
+        let blocking = null;
+        let caution = null;
+        if (complete) {
+            if (lo >= hi) {
+                blocking = `Lowest locked (${lo}\u00B0) must be below highest locked (${hi}\u00B0).`;
+            } else if (un < hi) {
+                blocking = `Unlocked (${un}\u00B0) must be at or above highest locked (${hi}\u00B0) \u2014 raising the pen is what releases it.`;
+            } else if (un - hi > 20) {
+                caution = `Unlocked is ${un - hi}\u00B0 above highest locked. That is a long way past the holder \u2014 check the mechanism still re-engages when a pen is put back.`;
+            }
+        }
+
+        const message = blocking || caution;
+        $("#penCalWarning")
+            .toggle(!!message)
+            .text(message || '')
+            .toggleClass('alert-danger', !!blocking)
+            .toggleClass('alert-warning', !blocking);
+        $("#penCalSave").prop('disabled', !complete || !!blocking);
+        $("#penCalUnlockNow").prop('disabled', typeof un !== 'number');
+    }
+
+    function jogPenTo(angle) {
+        const clamped = Math.max(0, Math.min(180, angle));
+        $("#penCalRange").val(clamped);
+        $("#penCalAngle").text(clamped);
+        $.post("/penJog", { angle: clamped }).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Pen jog failed", null);
+        });
+    }
+
+    $("#penCalRange").on('input', $.throttle(250, function() {
+        jogPenTo(penCalAngle());
+    }));
+    $("#penCalMinus5").click(() => jogPenTo(penCalAngle() - 5));
+    $("#penCalMinus1").click(() => jogPenTo(penCalAngle() - 1));
+    $("#penCalPlus1").click(() => jogPenTo(penCalAngle() + 1));
+    $("#penCalPlus5").click(() => jogPenTo(penCalAngle() + 5));
+
+    // Pen swap: releasing the pen needs the calibrated unlock angle, so this only
+    // appears once the holder has actually been calibrated (unlocked above the
+    // highest locked angle - equal means "no separate release position known").
+    $("#penSwapUnlockBtn").click(function() {
+        $.post("/unlockPen", {}).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't release the pen", null);
+        });
+    });
+
+    $("#penCalRecordLowest").click(function() {
+        penCalLimits.lowestLocked = penCalAngle();
+        renderPenCalLimits();
+    });
+    $("#penCalRecordHighest").click(function() {
+        penCalLimits.highestLocked = penCalAngle();
+        renderPenCalLimits();
+    });
+    $("#penCalRecordUnlocked").click(function() {
+        penCalLimits.unlocked = penCalAngle();
+        renderPenCalLimits();
+    });
+
+    $("#penCalSave").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/setPenLimits", {
+            lowestLocked: penCalLimits.lowestLocked,
+            highestLocked: penCalLimits.highestLocked,
+            unlocked: penCalLimits.unlocked,
+        }, function(limits) {
+            penCalLimits = {
+                lowestLocked: limits.lowestLocked,
+                highestLocked: limits.highestLocked,
+                unlocked: limits.unlocked,
+            };
+            renderPenCalLimits();
+            jogPenTo(limits.highestLocked);
+        }).fail(function(xhr) {
+            renderPenCalLimits();
+            showError("Couldn't save pen limits: " + (xhr.responseText || xhr.status), null);
+        });
+    });
+
+    $("#penCalUnlockNow").click(function() {
+        $.post("/unlockPen", {}, function() {
+            const un = penCalLimits.unlocked;
+            if (typeof un === 'number') {
+                $("#penCalRange").val(un);
+                $("#penCalAngle").text(un);
+            }
+        }).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't unlock the pen", null);
+        });
+    });
+
+    function loadPenCalLimits() {
+        $.get("/getPenLimits", function(limits) {
+            penCalLimits = {
+                lowestLocked: limits.lowestLocked,
+                highestLocked: limits.highestLocked,
+                unlocked: limits.unlocked,
+            };
+            $("#penCalRange").val(limits.highestLocked);
+            $("#penCalAngle").text(limits.highestLocked);
+            renderPenCalLimits();
+        });
+    }
+
     $("#useStoredCommandsButton").click(function() {
         $(this).prop('disabled', true);
         $.post("/useStoredCommands", {}, function(state) {
@@ -1233,6 +1395,7 @@ function init() {
         // figure still surfaces in the main preview flow via
         // renderPlottingEstimate's ink line and the per-layer breakdown.
         renderInkCapacityTable();
+        loadPenCalLimits();
     });
 
     toolsModal.addEventListener('hidden.bs.modal', function (event) {
@@ -1430,6 +1593,7 @@ function adaptToState(state) {
     stopRetractPolling();
     $(".muralSlide").hide();
     currentState = state;
+    applyPenLimitsToSliders(state);
     switch(state.phase) {
         case "RetractBelts":
             $("#retractBeltsSlide").show();
@@ -1478,7 +1642,9 @@ function adaptToState(state) {
             $("#penCalibrationSlide").show();
             // Prefill with the last calibrated pen angle, persisted in NVS.
             if (state.storedPenAngle && state.storedPenAngle !== -1) {
-                $("#servoRange").val(90 - state.storedPenAngle).trigger('input');
+                $("#servoRange")
+                    .val(penLimits.highestLocked + penLimits.lowestLocked - state.storedPenAngle)
+                    .trigger('input');
             }
             break;
         case "SvgSelect":
@@ -1642,6 +1808,7 @@ function updateLiveProgress(data) {
         $("#penSwapPanel").show();
         const penLabel = data.penSwapName ? `${data.penSwapIndex} (${data.penSwapName})` : String(data.penSwapIndex);
         $("#penSwapTitle").text(`Insert pen ${penLabel}`);
+        $("#penSwapUnlockBtn").toggle(penLimits.unlocked > penLimits.highestLocked);
     } else {
         $("#penSwapPanel").hide();
         if (data.state === 'paused' || data.state === 'stalled') {
@@ -2334,23 +2501,9 @@ function renderDefaultPenTypeSelect() {
 }
 
 function getPenSwapServoValueFromInputValue() {
-    const inputValue = parseInt($("#penSwapServoRange").val());
-    const value = 90 - inputValue;
-    if (value < 0) {
-        return 0;
-    } else if (value > 90) {
-        return 90;
-    }
-    return value;
+    return invertWithinLockedRange(parseInt($("#penSwapServoRange").val()));
 }
 
 function getResumePenServoValueFromInputValue() {
-    const inputValue = parseInt($("#resumePenRange").val());
-    const value = 90 - inputValue;
-    if (value < 0) {
-        return 0;
-    } else if (value > 90) {
-        return 90;
-    }
-    return value;
+    return invertWithinLockedRange(parseInt($("#resumePenRange").val()));
 }

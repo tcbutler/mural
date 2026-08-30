@@ -115,6 +115,11 @@ let commandsFile = PHASES_IMPLYING_COMMANDS.includes(START_PHASE)
     ? Buffer.from('d1000\nh600\np0\n150 150\np1\n450 150\n450 450\np0\n', 'utf8')
     : null;
 let rebootingUntil = 0;    // while > now, the device refuses connections
+
+// Calibrated pen-holder geometry (Pen::loadLimits). Defaults match the
+// firmware's, i.e. an uncalibrated machine.
+let penLimits = { lowestLocked: 0, highestLocked: 90, unlocked: 90 };
+let penAngle = 90;
 let plot = null;           // active simulated plot, see startPlot()
 const sseClients = new Set();
 
@@ -122,7 +127,13 @@ const sseClients = new Set();
 // so derive it here too rather than keeping a flag that could disagree with
 // whether a command file is actually present.
 function stateDocument() {
-    return { ...state, hasCommands: commandsFile !== null };
+    return {
+        ...state,
+        hasCommands: commandsFile !== null,
+        penLowestLocked: penLimits.lowestLocked,
+        penHighestLocked: penLimits.highestLocked,
+        penUnlocked: penLimits.unlocked,
+    };
 }
 
 function setPhase(next) {
@@ -392,6 +403,54 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/setServo') return ok(res);
+
+    // --- Pen holder calibration -------------------------------------------
+    // Mirrors the free-function handlers in src/main.cpp, including the 409 the
+    // firmware returns while drawing - the UI has to cope with that.
+    const penBusy = () => state.phase === 'Drawing';
+
+    if (p === '/getPenLimits') {
+        return json(res, { ...penLimits, current: state.storedPenAngle });
+    }
+
+    if (p === '/penJog') {
+        if (penBusy()) { res.writeHead(409, {'Content-Type':'text/plain'}); return res.end("Busy - can't move the pen while drawing"); }
+        const angle = parseInt(firstParam(url, body), 10);
+        if (!Number.isFinite(angle) || angle < 0 || angle > 180) {
+            res.writeHead(400, {'Content-Type':'text/plain'}); return res.end('Angle must be 0-180');
+        }
+        penAngle = angle;
+        return ok(res);
+    }
+
+    if (p === '/setPenLimits') {
+        if (penBusy()) { res.writeHead(409, {'Content-Type':'text/plain'}); return res.end("Busy - can't move the pen while drawing"); }
+        const q = new URLSearchParams(body.toString('utf8'));
+        const lowest = parseInt(q.get('lowestLocked'), 10);
+        const highest = parseInt(q.get('highestLocked'), 10);
+        const unlocked = parseInt(q.get('unlocked'), 10);
+        // Pen::limitsAreValid
+        const valid = [lowest, highest, unlocked].every(Number.isFinite) &&
+            lowest >= 0 && lowest < highest && highest <= unlocked && unlocked <= 180;
+        if (!valid) {
+            res.writeHead(400, {'Content-Type':'text/plain'});
+            return res.end('Invalid limits - need 0 <= lowest < highest <= unlocked <= 180');
+        }
+        penLimits = { lowestLocked: lowest, highestLocked: highest, unlocked };
+        // Pen::setLimits pulls a stale contact point back into the new range.
+        if (state.storedPenAngle >= 0) {
+            state.storedPenAngle = Math.max(lowest, Math.min(highest, state.storedPenAngle));
+        }
+        penAngle = highest;
+        console.log(`  pen limits set: ${lowest}/${highest}/${unlocked}`);
+        return json(res, { ...penLimits, current: state.storedPenAngle });
+    }
+
+    if (p === '/unlockPen') {
+        if (penBusy()) { res.writeHead(409, {'Content-Type':'text/plain'}); return res.end("Busy - can't move the pen while drawing"); }
+        penAngle = penLimits.unlocked;
+        return ok(res);
+    }
 
     if (p === '/setPenDistance') {
         const v = parseInt(firstParam(url, body), 10);
