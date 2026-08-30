@@ -58,6 +58,18 @@ jobs:
           g++ -std=c++17 -O2 -I../../src ../../src/kinematics.cpp parity_test.cpp -o parity_test
           ./parity_test
 
+  mock-harness:
+    name: Mock firmware contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guards tools/mock_firmware.js against drifting away from the firmware's
+      # state document, phase names, endpoints and SSE payload. No toolchain
+      # needed - it parses src/ and starts the mock on a scratch port.
+      - name: Check mock firmware contract
+        run: node tools/mock_contract_test.js
+
   pipeline:
     name: TS pipeline
     runs-on: ubuntu-latest
