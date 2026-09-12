@@ -311,11 +311,17 @@ bool Movement::extendToPoint(double x, double y, int& moveTime)
 {
     setOrigin();
 
-    startedHoming = true;
     float moveTimeF;
     if (!beginLinearTravel(x, y, moveSpeedSteps, moveTimeF)) {
         return false;
     }
+
+    // Only after the travel is actually under way. Setting this before the check
+    // meant a refused move still looked like homing had begun, and
+    // ExtendToHomePhase::loopPhase - which advances on
+    // hasStartedHoming() && !isMoving() - would step straight on to pen
+    // calibration with the belts still fully retracted.
+    startedHoming = true;
     moveTime = int(ceil(moveTimeF));
     return true;
 };

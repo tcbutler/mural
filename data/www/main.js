@@ -493,10 +493,24 @@ async function pollRetractStatus() {
     }
 }
 
+// Puts the extend screen back in a state the user can act on. Any exit from
+// the wait below has to go through here, or the screen is left with its only
+// button disabled behind a spinner and no way forward.
+function stopExtendingUI() {
+    $("#extendingSpinner").css('visibility', 'hidden');
+    $("#extendToHome").prop("disabled", false);
+}
+
 async function checkIfExtendedToHome(extendToHomeTime) {
     await new Promise(r => setTimeout(r, (extendToHomeTime || 0) * 1000));
 
     const waitPeriod = 2000;
+    // The firmware reports how long the move will take, so a phase that has not
+    // changed well past that is not a slow move - it is a move that never
+    // started, or a device that went away mid-travel. Waiting for ever on that
+    // is the dead end this screen was stuck in; give it a generous margin and
+    // then hand control back.
+    const deadline = Date.now() + Math.max(60000, (extendToHomeTime || 0) * 2000);
     let done = false;
     while (!done) {
         try {
@@ -504,10 +518,18 @@ async function checkIfExtendedToHome(extendToHomeTime) {
             if (state.phase !== 'ExtendToHome') {
                 adaptToState(state);
                 done = true;
+            } else if (Date.now() > deadline) {
+                stopExtendingUI();
+                showError(
+                    "Mural did not report finishing the move. Check whether the belts extended, then try again.",
+                    () => $("#extendToHome").click()
+                );
+                done = true;
             } else {
                 await new Promise(r => setTimeout(r, waitPeriod));
             }
         } catch (err) {
+            stopExtendingUI();
             showError("Failed to get current phase: " + err, () => checkIfExtendedToHome(0));
             done = true;
         }
@@ -582,9 +604,22 @@ function init() {
         $(this).prop( "disabled", true);
         $("#extendingSpinner").css('visibility', 'visible');
         $.post("/extendToHome", {})
-        .always(async function(res) {
-            const extendToHomeTime = parseInt(res);
-            await checkIfExtendedToHome(extendToHomeTime);
+        .done(async function(res) {
+            // The firmware answers with the estimated move time in seconds as
+            // plain text (ExtendToHomePhase::extendToHome).
+            const extendToHomeTime = parseInt(res, 10);
+            await checkIfExtendedToHome(Number.isFinite(extendToHomeTime) ? extendToHomeTime : 0);
+        })
+        .fail(function(jqXHR) {
+            // This used to be one .always() handler shared with success, where
+            // the failed request object parses as NaN, the wait below collapses
+            // to zero, and the poll then waits for a phase change that is never
+            // coming - the disabled button and spinner with no message that this
+            // screen got stuck showing. A refused or dropped request has to say
+            // so and give the button back.
+            stopExtendingUI();
+            const detail = (jqXHR && (jqXHR.responseText || jqXHR.statusText)) || 'no response';
+            showError("Could not start extending the belts: " + detail, () => $("#extendToHome").click());
         });
     });
     

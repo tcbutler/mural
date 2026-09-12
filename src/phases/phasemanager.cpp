@@ -115,6 +115,12 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
 
     root["phase"] = currentPhase;
     root["moving"] = moving;
+    // Whether a homing/extend move has been commanded. Read but never sent: the
+    // UI's ExtendToHome branch restores the spinner from state.startedHoming, so
+    // without this a page refresh mid-extend showed an idle, enabled button, and
+    // a second press would re-run setOrigin() in the middle of the travel - which
+    // re-zeros the belt position and loses the machine's idea of where it is.
+    root["startedHoming"] = startedHoming;
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;

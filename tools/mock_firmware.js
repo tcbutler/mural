@@ -54,6 +54,8 @@ const KNOWN_FAULTS = {
     'upload-fail': 'the command upload returns HTTP 500',
     'retract-stuck': 'belts never report themselves retracted',
     'no-pen-cal': 'no stored pen angle, so pen calibration is required',
+    'extend-fail': '/extendToHome is refused (firmware: "Not ready")',
+    'extend-stuck': '/extendToHome is accepted but the move never completes',
 };
 
 for (const f of FAULTS) {
@@ -88,6 +90,9 @@ function crc32(buf) {
 const state = {
     phase: START_PHASE,
     moving: false,
+    // Movement::hasStartedHoming - true from the moment an extend/home move is
+    // actually commanded (not merely requested; see Movement::extendToPoint).
+    startedHoming: false,
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
     // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept
@@ -428,8 +433,24 @@ const server = http.createServer(async (req, res) => {
         // (checkIfExtendedToHome in main.js). Returning JSON here instead left
         // the UI polling a phase that never changed, with every control
         // disabled - a dead end that is a mock artefact, not a UI bug.
+        // ExtendToHomePhase::extendToHome answers 400 "Not ready" when
+        // Movement::beginLinearTravel refuses the move (no top distance, or not
+        // homed). The UI used to treat that failure as a success and wait for a
+        // phase change that could never come.
+        if (FAULTS.has('extend-fail')) {
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            return res.end('Not ready');
+        }
+
         const moveSeconds = 1;
         state.moving = true;
+        state.startedHoming = true;
+        // A move that is accepted and then never finishes - a stalled belt, or a
+        // device that drops off the network mid-travel.
+        if (FAULTS.has('extend-stuck')) {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            return res.end(String(moveSeconds));
+        }
         setTimeout(() => {
             state.moving = false;
             if (state.resuming) {
