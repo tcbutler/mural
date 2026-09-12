@@ -275,7 +275,7 @@ Task *Runner::getNextTask()
         // pen up/down or color swap, since those are the moments a redraw would be
         // most visible.
         if (isPenLine || isColorLine || (executedLines % checkpointIntervalLines == 0)) {
-            writeCheckpoint(bookmark);
+            captureCheckpoint(bookmark);
         }
 
         if (isPenLine)
@@ -383,6 +383,11 @@ void Runner::run()
         return;
     }
 
+    // Write out any checkpoint that came due while the pen was down. Deliberately
+    // ahead of the paused/stalled guards below: both of those lift the pen, and a
+    // pause is exactly when the checkpoint most needs to be on flash.
+    flushCheckpointIfPenUp();
+
 #ifdef MURAL_TMC_UART
     // UNTESTED ON HARDWARE: stall monitoring during drawing. If either driver
     // reported a stall, Movement::runSteppers() already halted both motors. This
@@ -452,6 +457,9 @@ void Runner::run()
         }
         else
         {
+            // Last chance: run() returns at the guard above from here on, so a
+            // checkpoint still held in RAM would never reach flash.
+            flushCheckpointIfPenUp();
             stopped = true;
         }
     }
@@ -631,6 +639,11 @@ void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stat
     root["totalLines"] = totalLines;
     root["x"] = targetPosition.x;
     root["y"] = targetPosition.y;
+    // Diagnostic: longest single checkpoint write this run, in ms. A checkpoint
+    // write stops step generation for its duration, so this is the size of the
+    // worst mid-plot stall the firmware imposed on itself - measurable from the
+    // event stream instead of inferred from the drawing.
+    root["maxCheckpointMs"] = maxCheckpointBlockMs;
     // Multi-color pen swap (docs/multi-color.md sections 2-3): while
     // awaitingSwap is true, tell the UI which pen to prompt for so it can
     // show "Insert pen <penSwapIndex> (<penSwapName>)" alongside the
@@ -665,15 +678,19 @@ void Runner::pushProgressEvent(bool force, const char* stateOverride) {
     }
     lastEventMillis = now;
 
-    char buffer[192];
+    char buffer[256];
     buildProgressJson(buffer, sizeof(buffer), stateOverride);
     events->send(buffer, "progress");
 }
 
-// Checkpoints are write-before-execute: called with the file offset of a line that
+// Checkpoints are write-before-execute: captured with the file offset of a line that
 // is about to run (or that recently ran, for the periodic every-N-lines case), never
 // a line that's already known complete. See runner.h's Checkpoint doc comment.
-void Runner::writeCheckpoint(uint32_t offset) {
+//
+// Capturing is separate from writing. Everything the checkpoint records is read
+// here, at the moment it comes due; the NVS write itself may happen later, once
+// the pen is up (flushCheckpointIfPenUp).
+void Runner::captureCheckpoint(uint32_t offset) {
     Movement::Point position;
     if (!movement->getCoordinates(position)) {
         // Mid-move (shouldn't normally happen here, since getNextTask() only runs
@@ -682,27 +699,69 @@ void Runner::writeCheckpoint(uint32_t offset) {
         return;
     }
 
+    pendingWrite.offset = offset;
+    pendingWrite.executedLines = executedLines;
+    pendingWrite.x = position.x;
+    pendingWrite.y = position.y;
+    pendingWrite.topDistance = movement->getTopDistance();
+    pendingWrite.penAngle = pen->getPenDistance();
+    // Whether the pen is down at this line, captured at the same instant as the
+    // position above - see beginResume()'s hand-off ordering for why this has to be
+    // restored before any resumed command line is fed. Captured rather than read at
+    // write time precisely because the write is deferred until the pen is up: asking
+    // then would record the wrong state for this line.
+    pendingWrite.penDown = pen->isDown();
+    // Multi-color (docs/multi-color.md): which pen is mounted right now.
+    // currentColorIndex defaults to 1 and palette is empty for single-color
+    // files, so this stores 1/"" for them - see Checkpoint's doc comment.
+    pendingWrite.colorIndex = currentColorIndex;
+    pendingWrite.colorName = (currentColorIndex >= 1 && currentColorIndex <= paletteCount && currentColorIndex <= maxPaletteColors)
+        ? palette[currentColorIndex - 1]
+        : String("");
+    pendingWriteValid = true;
+
+    flushCheckpointIfPenUp();
+}
+
+// Persisting to NVS blocks loop(), and so step generation, for as long as it takes -
+// usually a few milliseconds, but when the page fills the driver has to erase, and
+// that is far longer. With the pen resting on the paper and the machine stationary
+// between two tasks, that shows up as a blot. Pauses with the pen up cost nothing but
+// time, so hold the checkpoint in RAM until then.
+//
+// The cost of deferring is that a resume may re-execute back to the start of the
+// current stroke rather than to within checkpointIntervalLines of the interruption.
+// Re-drawing a whole stroke over itself is less visible than re-drawing part of one,
+// and the at-least-once guarantee is unchanged: the offset still points at a line
+// that had not finished when the checkpoint came due.
+void Runner::flushCheckpointIfPenUp() {
+    if (!pendingWriteValid || pen->isDown()) {
+        return;
+    }
+
+    unsigned long startedAt = millis();
+    writeCheckpoint(pendingWrite);
+    pendingWriteValid = false;
+
+    unsigned long tookMs = millis() - startedAt;
+    if (tookMs > maxCheckpointBlockMs) {
+        maxCheckpointBlockMs = tookMs;
+    }
+}
+
+void Runner::writeCheckpoint(const Checkpoint& checkpoint) {
     Preferences prefs;
     prefs.begin(PREFS_CKPT_NAMESPACE, false);
     prefs.putBool(PREFS_CKPT_VALID_KEY, true);
-    prefs.putUInt(PREFS_CKPT_OFFSET_KEY, offset);
-    prefs.putInt(PREFS_CKPT_EXEC_LINES_KEY, executedLines);
-    prefs.putDouble(PREFS_CKPT_X_KEY, position.x);
-    prefs.putDouble(PREFS_CKPT_Y_KEY, position.y);
-    prefs.putInt(PREFS_CKPT_TOP_DIST_KEY, movement->getTopDistance());
-    prefs.putInt(PREFS_CKPT_PEN_ANGLE_KEY, pen->getPenDistance());
-    // Whether the pen is down right now, at the same instant as the position above -
-    // see beginResume()'s hand-off ordering for why this has to be restored before
-    // any resumed command line is fed.
-    prefs.putBool(PREFS_CKPT_PEN_DOWN_KEY, pen->isDown());
-    // Multi-color (docs/multi-color.md): which pen is mounted right now.
-    // currentColorIndex defaults to 1 and palette is empty for single-color
-    // files, so this writes 1/"" for them - see Checkpoint's doc comment.
-    prefs.putInt(PREFS_CKPT_COLOR_INDEX_KEY, currentColorIndex);
-    String colorName = (currentColorIndex >= 1 && currentColorIndex <= paletteCount && currentColorIndex <= maxPaletteColors)
-        ? palette[currentColorIndex - 1]
-        : String("");
-    prefs.putString(PREFS_CKPT_COLOR_NAME_KEY, colorName);
+    prefs.putUInt(PREFS_CKPT_OFFSET_KEY, checkpoint.offset);
+    prefs.putInt(PREFS_CKPT_EXEC_LINES_KEY, checkpoint.executedLines);
+    prefs.putDouble(PREFS_CKPT_X_KEY, checkpoint.x);
+    prefs.putDouble(PREFS_CKPT_Y_KEY, checkpoint.y);
+    prefs.putInt(PREFS_CKPT_TOP_DIST_KEY, checkpoint.topDistance);
+    prefs.putInt(PREFS_CKPT_PEN_ANGLE_KEY, checkpoint.penAngle);
+    prefs.putBool(PREFS_CKPT_PEN_DOWN_KEY, checkpoint.penDown);
+    prefs.putInt(PREFS_CKPT_COLOR_INDEX_KEY, checkpoint.colorIndex);
+    prefs.putString(PREFS_CKPT_COLOR_NAME_KEY, checkpoint.colorName);
     prefs.end();
 }
 

@@ -442,7 +442,7 @@ void setup()
     // correct progress right away instead of a stale/empty bar for up to ~1s.
     events.onConnect([](AsyncEventSourceClient *client) {
         if (runner != NULL) {
-            char buffer[192];
+            char buffer[256];
             runner->buildProgressJson(buffer, sizeof(buffer));
             client->send(buffer, "progress", millis());
         }

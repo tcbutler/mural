@@ -51,11 +51,16 @@ class Runner {
     Task* currentTask;
     bool stopped;
     File openedFile;
-    double totalDistance;
+    // Zeroed rather than left indeterminate. Before any plot has run, the SSE
+    // onConnect handler still builds a progress payload from these - measured on a
+    // freshly booted device, that reported executedLines 1081588121 and totalLines
+    // -1717986918 to the UI. Same class of bug as the uninitialised
+    // Movement::Point that pegged progress at 100%.
+    double totalDistance = 0;
     Movement::Point targetPosition;
-    int progress;
-    int totalLines;
-    int executedLines;
+    int progress = 0;
+    int totalLines = 0;
+    int executedLines = 0;
     Task *finishingSequence[1];
     int sequenceIx = 0;
 
@@ -77,7 +82,23 @@ class Runner {
     // NVS checkpoint write cadence: every N lines (to limit flash wear) and, in
     // addition, on every pen up/down line regardless of N (see getNextTask()).
     static const int checkpointIntervalLines = 20;
-    void writeCheckpoint(uint32_t offset);
+
+    // Checkpoints are captured in RAM the moment they come due and only written
+    // to NVS when the pen is up - see flushCheckpointIfPenUp() for why. The
+    // captured values are the state at the line that came due, not at flush
+    // time, so deferring the write does not change what a resume restores.
+    Checkpoint pendingWrite;
+    bool pendingWriteValid = false;
+    void captureCheckpoint(uint32_t offset);
+    void flushCheckpointIfPenUp();
+    void writeCheckpoint(const Checkpoint& checkpoint);
+
+    // Longest single blocking stretch inside a checkpoint write this run, in
+    // milliseconds. Diagnostic: an NVS write is normally a few ms, but when the
+    // page fills the driver has to erase, and loop() - and so step generation -
+    // is stopped for all of it. Reported over SSE so a stall can be measured
+    // rather than guessed at.
+    unsigned long maxCheckpointBlockMs = 0;
 
     // --- Time-weighted progress ------------------------------------------
     //

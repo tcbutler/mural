@@ -181,6 +181,9 @@ function progressPayload(overrideState) {
         totalLines: plot ? plot.totalLines : 0,
         x: plot ? Math.round(plot.x) : 0,
         y: plot ? Math.round(plot.y) : 0,
+        // Runner's diagnostic: longest single checkpoint write this run, in ms.
+        // Always 0 here - the mock has no flash to stall on.
+        maxCheckpointMs: 0,
     };
     if (plot && plot.awaitingSwap) {
         p.penSwapIndex = plot.swapIndex;
