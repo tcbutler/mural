@@ -186,7 +186,8 @@
             <h6><small class="text-muted" id="transformText"></small></h6>
           </div>
         </div>
-        <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg">
+        <h6 class="mb-2"><small class="text-muted">Upload an SVG drawing, or a photo (JPEG, PNG, WebP)</small></h6>
+        <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
         <button class="w-100 btn btn-lg btn-primary mb-6" id="preview" disabled>Preview drawing</button>
         <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="installTestPatternButton">Draw calibration test pattern</button>
         <!-- Only shown when the device still holds a command file (state.hasCommands).

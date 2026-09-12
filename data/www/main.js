@@ -4,6 +4,7 @@ import { showError } from './alerts.js';
 import { crc32OfString } from './crc32.js';
 import { estimatePenUsage, loadPenCapacities, resetPenCapacities, savePenCapacities, loadDefaultPenType, saveDefaultPenType } from './inkCapacity.js';
 import { initPreviewZoom } from './previewZoom.js';
+import { isRasterFile, rasterFileToSvgString } from './rasterImport.js';
 
 let currentState = null;
 
@@ -616,18 +617,33 @@ function init() {
         });
     });
 
-    async function getUploadedSvgString() {
+    // Whether there is an artwork loaded at all. The render paths only need to
+    // know that much, and asking the file input is free - re-reading and
+    // re-decoding the source on every preview is not.
+    function hasUploadedArtwork() {
+        return $("#uploadSvg")[0].files.length > 0;
+    }
+
+    // Whether the loaded artwork came in as pixels. Decides which render route
+    // is even possible - see the #preview handler.
+    let sourceIsRaster = false;
+
+    // A photo is wrapped as an SVG holding the bitmap (rasterImport.js); an SVG
+    // is its own text. Either way what comes back is an SVG document string,
+    // which is the only thing svgControl understands.
+    async function getUploadedArtworkSvgString() {
         const [file] = $("#uploadSvg")[0].files;
-        if (file) {
-            return await file.text();
-        } else {
+        if (!file) {
             return null;
         }
+        sourceIsRaster = isRasterFile(file);
+        if (sourceIsRaster) {
+            return await rasterFileToSvgString(file);
+        }
+        return await file.text();
     }
 
     $("#uploadSvg").change(async function() {
-        const svgString = await getUploadedSvgString();
-
         // A new (or cleared) image invalidates every previous estimate,
         // smart-default application, and per-layer/hue override - they all
         // refer to a source that's about to change.
@@ -648,8 +664,24 @@ function init() {
         $("#processingEstimateText,#processingWarning,#plottingEstimateSummary").hide().empty();
         $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale").hide();
 
+        // An undecodable photo or a malformed SVG must not leave the input
+        // naming a file that never loaded, or the render paths' presence check
+        // would let a preview start with nothing behind it.
+        let svgString = null;
+        sourceIsRaster = false;
+        try {
+            svgString = await getUploadedArtworkSvgString();
+            if (svgString) {
+                svgControl.setSvgString(svgString, currentState);
+            }
+        } catch (err) {
+            svgString = null;
+            sourceIsRaster = false;
+            $("#uploadSvg").val('');
+            showError(err.message || String(err));
+        }
+
         if (svgString) {
-            svgControl.setSvgString(svgString, currentState);
             updateTargetSizeInputs();
             showTargetSizeWarning(null);
 
@@ -781,9 +813,8 @@ function init() {
         renderTargetGeneration = settingsGeneration;
         showRenderOverlay();
 
-        const svgString = await getUploadedSvgString();
-        if (!svgString) {
-            throw new Error('No SVG string');
+        if (!hasUploadedArtwork()) {
+            throw new Error('No image loaded');
         }
 
         updateRenderStage("Rasterizing");
@@ -878,9 +909,8 @@ function init() {
         renderTargetGeneration = settingsGeneration;
         showRenderOverlay();
 
-        const svgString = await getUploadedSvgString();
-        if (!svgString) {
-            throw new Error('No SVG string');
+        if (!hasUploadedArtwork()) {
+            throw new Error('No image loaded');
         }
 
         if (currentPreviewId == thisPreviewId) {
@@ -1080,6 +1110,18 @@ function init() {
 
     $("#preview").click(async function() {
         $("#svgUploadSlide").hide();
+
+        // Path tracing pulls paths out of the SVG with paper.js importSVG. A
+        // photo is wrapped as a single <image> (rasterImport.js) and contains no
+        // paths at all, so that route has nothing to trace - measured, it sits
+        // on "Importing" and never finishes. The raster route is the only
+        // meaningful one for pixels, so take it rather than offering a choice
+        // where one option is a dead end.
+        if (sourceIsRaster) {
+            $("#vectorRasterVector").click();
+            return;
+        }
+
         $("#chooseRendererSlide").show();
     });
 
