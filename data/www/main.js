@@ -863,6 +863,12 @@ function init() {
             infillDensity: getInfillDensity(),
             flattenPaths: getFlattenPaths(),
             topDistance: currentState.topDistance,
+            // Where the drawing lands in the drawable area (tsc/src/placement.ts).
+            // The pipeline renders at the origin regardless; this translates the
+            // finished command file, so the preview still shows the artwork
+            // filling its frame rather than shrunk into a corner.
+            placement: getPlacement(),
+            safeWidth: getSafeWidth() || undefined,
             // Multi-color (docs/multi-color.md). Vector/path-tracing mode has
             // no vectorize step to tag colors ahead of time, so it needs
             // colorSeparation to opt in to literal-fill/stroke-color
@@ -1412,6 +1418,19 @@ function init() {
             renderPenCalLimits();
         });
     }
+
+    // Changing where the plot lands changes the command file, so it invalidates
+    // the current render exactly like a size or fill change does.
+    $("#placementSelect").on('change', function() {
+        try { localStorage.setItem('muralPlacement', getPlacement()); } catch (e) { /* private mode */ }
+        markDirty();
+    });
+    try {
+        const saved = localStorage.getItem('muralPlacement');
+        if (saved === 'topLeft' || saved === 'centre') {
+            $("#placementSelect").val(saved);
+        }
+    } catch (e) { /* private mode - stay with the default */ }
 
     $("#useStoredCommandsButton").click(function() {
         $(this).prop('disabled', true);
@@ -1973,6 +1992,13 @@ function waitForDeviceBack() {
 }
 
 let deviceStateAfterFinish = null;
+
+// Persisted per browser: it is a property of how the machine is hung and where
+// the paper is taped, not of the image, so it should survive picking a new one.
+function getPlacement() {
+    const value = $("#placementSelect").val();
+    return value === 'topLeft' ? 'topLeft' : 'centre';
+}
 
 function getInfillDensity() {
     const density = parseInt($("#infillDensity").val());

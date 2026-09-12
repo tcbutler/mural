@@ -90,8 +90,11 @@ const state = {
     moving: false,
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
-    homeX: 500,
-    homeY: 400,
+    // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept
+    // derived rather than hardcoded, or placement-related UI is tested against
+    // a home position the machine would never report.
+    homeX: 300,
+    homeY: 350,
     storedTopDistance: 1000,
     storedPenAngle: FAULTS.has('no-pen-cal') ? -1 : 30,
     uploadCrc32: 0,
@@ -360,6 +363,8 @@ const server = http.createServer(async (req, res) => {
             state.topDistance = v;
             state.storedTopDistance = v;
             state.safeWidth = Math.round(v * 0.6);
+            state.homeX = Math.round(state.safeWidth / 2);
+            state.homeY = 350;   // HOME_Y_OFFSET_MM
         }
         setPhase('SvgSelect');
         return json(res, stateDocument());

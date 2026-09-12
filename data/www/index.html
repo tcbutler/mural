@@ -137,6 +137,15 @@
             <button type="button" class="btn btn-outline-secondary w-100 paper-preset-btn" style="flex:1;" data-w="420" data-h="594">A2</button>
           </div>
           <div id="targetSizeWarning" class="alert alert-warning py-2 mb-2" style="display:none;"></div>
+          <!-- Where a drawing smaller than the drawable area lands. Centring is
+               both what you'd expect and where the machine draws best: a
+               V-plotter's geometry degrades towards the edges of its reach, so
+               the top-left corner is the most distorted place to draw. -->
+          <label for="placementSelect" class="form-label mb-0">Position on the wall</label>
+          <select class="form-select mb-2" id="placementSelect">
+            <option value="centre" selected>Centred on home position</option>
+            <option value="topLeft">Top-left of drawable area</option>
+          </select>
         </div>
         <div class="container svg-control mb-2" style="display: none;">
           <div class="row">
@@ -574,6 +583,15 @@
         <label for="diameterInput" class="form-label">Effective pulley diameter (mm)</label>
         <input type="number" step="any" class="form-control mb-3" id="diameterInput">
         <label for="homedStepOffsetInput" class="form-label">Homed step offset (mm)</label>
+        <h6 class="mb-2"><small class="text-muted">
+          Belt length the firmware assumes at the fully-retracted home position.
+          Anything between the anchor point and the belt end counts here &mdash; if
+          the belts are hooked to carabiners rather than straight onto the nails,
+          add their length. Getting this wrong skews the whole coordinate system,
+          worst towards the edges of the drawable area. Note it is a single value
+          applied to both motors, so unequal hardware on the two sides cannot be
+          expressed and will leave a skew no calibration can remove.
+        </small></h6>
         <input type="number" step="any" class="form-control mb-3" id="homedStepOffsetInput">
         <button class="w-100 btn btn-lg btn-primary mb-5" id="savePhysicsConstantsTool">Save physics constants</button>
       </div>

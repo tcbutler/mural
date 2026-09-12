@@ -1,4 +1,5 @@
 import { renderCommandsToSvgJson } from "./toSvgJson";
+import { computePlacementOffset, offsetCommands } from "./placement";
 import { renderSvgJsonToCommands } from "./toCommands";
 import { GrayscaleLevelResult, vectorizeImageData, vectorizeImageDataColor, vectorizeImageDataGrayscale, withGradientField } from './vectorizer';
 import { InfillDensities, InfillDensity, RequestTypes } from "./types";
@@ -189,11 +190,25 @@ async function render(request: RequestTypes.RenderSVGRequest) {
         ? renderResult.layers.map(l => l.color)
         : undefined;
 
+    // Preview is built from the UNPLACED commands, so it keeps showing the
+    // artwork filling its frame rather than shrunk into a corner of the drawable
+    // area. Only the command file that goes to the machine is translated.
     const resultSvgJson = renderCommandsToSvgJson(renderResult.commands, request.width, request.height, updateStatusFn, layerColors);
+
+    const placementOffset = computePlacementOffset({
+        width: request.width,
+        height: request.height,
+        safeWidth: request.safeWidth ?? request.width,
+        homeX: request.homeX,
+        homeY: request.homeY,
+        placement: request.placement ?? 'centre',
+    });
+    const placedCommands = offsetCommands(renderResult.commands, placementOffset);
+
     self.postMessage({
         type: "renderer",
         payload: {
-            commands: renderResult.commands,
+            commands: placedCommands,
             svgJson: resultSvgJson,
             distance: renderResult.distance,
             drawDistance: renderResult.drawDistance,

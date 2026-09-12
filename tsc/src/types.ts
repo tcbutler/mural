@@ -112,6 +112,15 @@ export namespace RequestTypes {
         // header so a later replay can warn if the plotter's current pin
         // distance no longer matches.
         topDistance: number,
+        // Where the drawing sits inside the drawable area (see placement.ts).
+        // The pipeline always renders at the origin; this translates the
+        // finished command file. Defaults to centring on the home position -
+        // "topLeft" reproduces the original behaviour of jamming the drawing
+        // into the corner of the reachable area.
+        placement?: 'centre' | 'topLeft',
+        // Drawable width (mm) the placement is centred within. Falls back to
+        // the drawing's own width, which makes centring a no-op.
+        safeWidth?: number,
         // Multi-color (see docs/multi-color.md). Raster-origin SVGs already
         // carry a `colorIndex` tag on each path (from vectorizeImageDataColor
         // via the same data-paper-data mechanism grayscale uses), so no flag
