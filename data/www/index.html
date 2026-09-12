@@ -23,42 +23,59 @@
       </div>
       <div id="retractBeltsSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
-        <h3 class="mb-2 fw-normal">Retract belts</h3>
-        <ul class="instr-list">
-          <li class="instr-line">Place the belt loops on the homing screws.</li>
-          <li class="instr-line">Retract the belts until the motors stall.</li>
-          <li class="instr-line"><b>Don't</b> let the motors stall for too long.</li>
-        </ul>
-        <div class="mb-4">
-          <div class="d-flex align-items-center mb-2">
+        <h3 class="mb-3 fw-normal">Retract belts</h3>
+
+        <!-- Laid out as the three physical actions this screen actually asks for,
+             with each one's controls beneath it. Previously every instruction sat
+             at the top and every control at the bottom, leaving the reader to pair
+             them up. -->
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">1</span> Place the belt loops</div>
+          <p class="substep-hint">Hook both belt loops onto the homing screws.</p>
+          <div class="alert alert-warning py-2 mb-2" id="motorsFreeWarning" style="display:none;">
+            Motors are released &mdash; the belts will run out freely and Mural will not
+            hold itself up. Only do this with the machine resting or supported. Press
+            <b>Hold motors</b> before jogging or continuing.
+          </div>
+          <p class="substep-hint">
+            If the belts are fully out, the motors hold too firmly to pull them
+            through by hand &mdash; release them, pull the slack in, then hold again.
+          </p>
+          <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="freeMotorsBtn">Release motors (pull belts by hand)</button>
+        </div>
+
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">2</span> Retract the belts</div>
+          <p class="substep-hint">
+            Run each motor until its belt is retracted and the motor stalls.
+            <b>Don't</b> let a motor stall for long.
+          </p>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="autoRetractButton" style="display:none;">Auto-retract</button>
+          <p class="substep-hint" id="manualRetractHint" style="display:none;">If auto-detection fails, use the manual controls below.</p>
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" role="switch" id="leftMotorToggle">
+            <label class="form-check-label" for="leftMotorToggle">Left motor</label>
+          </div>
+          <div class="d-flex align-items-center mb-3">
             <div class="spinner-border spinner-border-sm me-2" id="leftRetractSpinner" role="status" style="visibility:hidden;"></div>
             <span id="leftRetractLabel">Left belt: idle</span>
+          </div>
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" role="switch" id="rightMotorToggle">
+            <label class="form-check-label" for="rightMotorToggle">Right motor</label>
           </div>
           <div class="d-flex align-items-center">
             <div class="spinner-border spinner-border-sm me-2" id="rightRetractSpinner" role="status" style="visibility:hidden;"></div>
             <span id="rightRetractLabel">Right belt: idle</span>
           </div>
         </div>
-        <button class="w-100 btn btn-lg btn-primary mb-4" id="autoRetractButton" style="display:none;">Auto-retract</button>
-        <h6 class="mb-2" id="manualRetractHint" style="display:none;"><small class="text-muted">If auto-detection fails, use the manual controls below.</small></h6>
-        <div class="form-check form-switch mb-5">
-          <input class="form-check-input" type="checkbox" role="switch" id="leftMotorToggle">
-          <label class="form-check-label" for="leftMotorToggle">Left motor</label>
+
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">3</span> Continue</div>
+          <p class="substep-hint">Both belts retracted and the loops still seated?</p>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="beltsRetracted">Belts are retracted</button>
         </div>
-        <div class="form-check form-switch mb-5">
-          <input class="form-check-input" type="checkbox" role="switch" id="rightMotorToggle">
-          <label class="form-check-label" for="rightMotorToggle">Right motor</label>
-        </div>
-        <!-- Manual retraction aid: with the belts fully out, the steppers hold too
-             firmly to pull the belt through by hand, so retraction otherwise means
-             jogging the whole length at motor speed. -->
-        <div class="alert alert-warning py-2 mb-2" id="motorsFreeWarning" style="display:none;">
-          Motors are released &mdash; the belts will run out freely and Mural will not
-          hold itself up. Only do this with the machine resting or supported. Press
-          <b>Hold motors</b> before jogging or continuing.
-        </div>
-        <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="freeMotorsBtn">Release motors (pull belts by hand)</button>
-        <button class="w-100 btn btn-lg btn-primary mb-2" id="beltsRetracted">Belts are retracted</button>
+
         <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
       </div>
       <div id="distanceBetweenAnchorsSlide" class="muralSlide" style="display:none;">

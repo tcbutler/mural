@@ -149,6 +149,47 @@ main.form-signin {
   text-transform: uppercase;
 }
 
+/* Numbered sub-steps within a single screen. Used where a screen is really a
+   short sequence of physical actions rather than one - the retract-belts screen
+   otherwise listed every instruction at the top and pooled every control at the
+   bottom, leaving you to map one onto the other. */
+.substep {
+  border-left: var(--border-w) solid var(--line);
+  padding-left: 14px;
+  margin-bottom: 28px;
+}
+
+.substep:last-of-type { margin-bottom: 16px; }
+
+.substep-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.substep-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border: var(--border-w) solid var(--ink);
+  background: var(--accent4);
+  font-size: 12px;
+  font-weight: 800;
+  flex: none;
+}
+
+.substep-hint {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
 .ui-topbar {
   display: flex;
   justify-content: space-between;

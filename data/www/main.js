@@ -214,6 +214,68 @@ function updatePreviewStatusUI() {
     $("#acceptBlockedNote").toggle(previewDirty && hasRenderedOnce);
 }
 
+// --- "You are here" ---------------------------------------------------------
+//
+// Plotting an image is a sequence, but each screen arrived with no indication of
+// where it sat in that sequence - the retract-belts screen just appeared, with
+// nothing to say it was the third of six things.
+//
+// One table drives it. The client-only screens (renderer choice, preview,
+// upload) belong to the step that produced them rather than being steps of their
+// own: from the user's point of view they are all still "choose the image".
+const FLOW_STEPS = [
+    { label: 'Pin distance',  slides: ['distanceBetweenAnchorsSlide'] },
+    { label: 'Choose image',  slides: ['svgUploadSlide', 'chooseRendererSlide', 'drawingPreviewSlide', 'uploadProgress'] },
+    { label: 'Retract belts', slides: ['retractBeltsSlide'] },
+    { label: 'Extend belts',  slides: ['extendToHomeSlide'] },
+    { label: 'Calibrate pen', slides: ['penCalibrationSlide'] },
+    { label: 'Draw',          slides: ['beginDrawingSlide', 'drawingLiveSlide'] },
+];
+
+// loadingSlide is transient, and resumeDrawingSlide is a side entry offered
+// before the sequence starts - neither has a position to report, so both simply
+// show nothing rather than a misleading number.
+function flowStepFor(slideId) {
+    const index = FLOW_STEPS.findIndex(step => step.slides.includes(slideId));
+    return index === -1 ? null : { number: index + 1, total: FLOW_STEPS.length, label: FLOW_STEPS[index].label };
+}
+
+function updateFlowPosition() {
+    const visible = [...document.querySelectorAll('.muralSlide')].filter(s => s.offsetParent !== null);
+    for (const slide of visible) {
+        const topbar = slide.querySelector('.ui-topbar');
+        if (!topbar) {
+            continue;
+        }
+        const step = flowStepFor(slide.id);
+        let marker = topbar.querySelector('.step-count');
+        if (!step) {
+            if (marker) marker.remove();
+            continue;
+        }
+        if (!marker) {
+            // .ui-topbar is already a space-between flex row with the eyebrow on
+            // the left, so the marker just goes on the right.
+            marker = document.createElement('span');
+            marker.className = 'step-count';
+            topbar.appendChild(marker);
+        }
+        marker.textContent = `Step ${step.number} of ${step.total} \u00B7 ${step.label}`;
+    }
+}
+
+// Slides are shown from a dozen places - adaptToState's switch, the renderer
+// choice, the preview, the upload progress. Watching for the change is one
+// mechanism that cannot be forgotten at a new call site, rather than a rule to
+// remember to call this each time.
+function watchFlowPosition() {
+    const observer = new MutationObserver(() => updateFlowPosition());
+    document.querySelectorAll('.muralSlide').forEach(slide => {
+        observer.observe(slide, { attributes: true, attributeFilter: ['style', 'class'] });
+    });
+    updateFlowPosition();
+}
+
 function markDirty() {
     settingsGeneration++;
     previewDirty = true;
@@ -355,6 +417,7 @@ function updatePlotDimensionsDisplay() {
 
 window.onload = function () {
     init();
+    watchFlowPosition();
 };
 
 let uploadConvertedCommands = null;
