@@ -3,6 +3,7 @@ import * as client from './client.js';
 import { showError } from './alerts.js';
 import { crc32OfString } from './crc32.js';
 import { estimatePenUsage, loadPenCapacities, resetPenCapacities, savePenCapacities, loadDefaultPenType, saveDefaultPenType } from './inkCapacity.js';
+import { initPreviewZoom } from './previewZoom.js';
 
 let currentState = null;
 
@@ -418,6 +419,12 @@ function updatePlotDimensionsDisplay() {
 window.onload = function () {
     init();
     watchFlowPosition();
+    initPreviewZoom({
+        toggleId: 'previewZoomToggle',
+        imageId: 'previewSvg',
+        frameId: 'previewFrame',
+        scaleReadoutId: 'previewZoomScale',
+    });
 };
 
 let uploadConvertedCommands = null;

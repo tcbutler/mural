@@ -364,16 +364,36 @@ export function getSvgJson(svgString) {
     return json;
 }
 
+// Long edge of the rendered preview bitmap, in pixels.
+//
+// The preview used to be rasterised at the plot's millimetre dimensions taken
+// as pixels: an A4 plot became a 210x210 image. That is the reason "Enlarge"
+// appeared to do nothing - it scaled a 210px bitmap up to fill the screen,
+// which cannot show detail that was never drawn. Resolution should follow what
+// the screen can display, not how big the paper is.
+export const previewLongEdgePx = 1600;
+
 export function convertJsonToDataURL(json, width, height) {
+    // Never downscale a plot that is already larger than the budget in mm - a
+    // 2400mm mural does not want a 1600px preview that is worse than before.
+    const scale = Math.max(1, previewLongEdgePx / Math.max(width, height));
+    const canvasWidth = Math.round(width * scale);
+    const canvasHeight = Math.round(height * scale);
+
     $("#previewCanvas").remove();
-    $(document.body).append(`<canvas id="previewCanvas" width="${width}" height="${height}" style="display: none;"></canvas>`);
-    
+    $(document.body).append(`<canvas id="previewCanvas" width="${canvasWidth}" height="${canvasHeight}" style="display: none;"></canvas>`);
+
     paper.setup($("#previewCanvas")[0]);
     paper.project.importJSON(json);
+    // The command geometry spans 0..width, so scaling the whole layer about the
+    // origin lands it exactly on the enlarged canvas.
+    if (scale !== 1) {
+        paper.project.activeLayer.scale(scale, new paper.Point(0, 0));
+    }
     paper.view.draw();
 
     const dataURL = $("#previewCanvas")[0].toDataURL();
-    
+
     paper.project.remove();
     $("#previewCanvas").remove();
 

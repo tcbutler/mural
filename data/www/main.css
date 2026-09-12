@@ -994,7 +994,11 @@ details.info .info-panel {
    nothing loses its state while zoomed. */
 .two-col:has(.zoom-toggle:checked) .col-controls,
 .muralSlide:has(.zoom-toggle:checked) .estimate-banner,
-.muralSlide:has(.zoom-toggle:checked) .slide-actions {
+.muralSlide:has(.zoom-toggle:checked) .slide-actions,
+/* The cog is fixed to the same corner as Close, so the two overlapped once
+   Close was pinned to the viewport. It is not usable from a fullscreen preview
+   anyway. */
+.muralSlide:has(.zoom-toggle:checked) .tools-gear-btn {
   visibility: hidden;
 }
 
@@ -1007,14 +1011,71 @@ body:has(.zoom-toggle:checked) {
 .zoom-toggle:checked ~ .preview-frame img {
   max-width: 96%;
   max-height: 96%;
+  /* Zoom is applied about the image's own centre by previewZoom.js. */
+  transform-origin: center center;
+  will-change: transform;
+  cursor: grab;
 }
+
+.zoom-toggle:checked ~ .preview-frame {
+  /* The image is transformed beyond its box once zoomed; clip it to the
+     fullscreen frame rather than letting it paint over the whole document. */
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* Current magnification, and the one-line reminder that the gestures exist.
+   Both only appear in the enlarged view. */
+.zoom-scale,
+.zoom-hint {
+  display: none;
+  position: absolute;
+  z-index: 6;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  padding: 6px 10px;
+  pointer-events: none;
+}
+
+.zoom-scale { top: 10px; left: 10px; }
+
+.zoom-hint {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zoom-toggle:checked ~ .preview-frame .zoom-scale,
+.zoom-toggle:checked ~ .preview-frame .zoom-hint { display: inline-flex; }
 
 /* .zoom-open lives nested inside .preview-frame (sibling of the image),
    not as a direct sibling of the checkbox, so it needs a descendant form
    of the sibling rule; .zoom-close is a direct sibling and uses the plain
    form. */
 .zoom-toggle:checked ~ .preview-frame .zoom-open { display: none; }
-.zoom-toggle:checked ~ .zoom-close { display: inline-flex; z-index: 1001; }
+/* Pinned to the viewport, not to .preview-box. The enlarged frame is
+   position:fixed, but this label is a sibling of it inside .preview-box, so it
+   was positioning against that box's place in the normal flow - leaving Close
+   floating in the middle of the enlarged image instead of in a corner. */
+.zoom-toggle:checked ~ .zoom-close {
+  display: inline-flex;
+  z-index: 1001;
+  position: fixed;
+  top: 10px;
+  right: 10px;
+}
 
 .zoom-open:focus-visible,
 .zoom-close:focus-visible {

@@ -245,6 +245,10 @@
                   </div>
                 </div>
                 <label for="previewZoomToggle" class="zoom-open">&#10530; Enlarge</label>
+                <!-- Only meaningful while enlarged; hidden until zoomed in (see
+                     previewZoom.js), so the fit view stays uncluttered. -->
+                <span class="zoom-scale" id="previewZoomScale" style="visibility:hidden;">1.0x</span>
+                <span class="zoom-hint" id="previewZoomHint">Pinch or double-tap to zoom &middot; drag to pan</span>
               </div>
               <label for="previewZoomToggle" class="zoom-close">&#10005; Close</label>
             </div>
