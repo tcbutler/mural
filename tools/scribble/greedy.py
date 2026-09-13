@@ -94,8 +94,10 @@ def greedy_scribble(d_target, n_strokes=45000, pen=1.4, seg_lo=5.0, seg_hi=22.0,
             if not pending and not refill():
                 break
             cy, cx = pending.pop()
-            p = np.array([cx * CELL + rng.uniform(0, CELL),
-                          cy * CELL + rng.uniform(0, CELL)])
+            # The coarse grid is padded up to a whole number of cells, so the
+            # last row and column overhang the image; clamp back inside it.
+            p = np.array([min(cx * CELL + rng.uniform(0, CELL), w - 1.0),
+                          min(cy * CELL + rng.uniform(0, CELL), h - 1.0)])
             heading = rng.uniform(0, 2 * np.pi)
             continue
 

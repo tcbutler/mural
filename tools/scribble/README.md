@@ -18,6 +18,22 @@ python3 scribble.py photo.jpg --algo tsp --points 20000 --break-edges 30
 python3 scribble.py --chart                       # ramp + sphere, with metrics
 ```
 
+## Levels, before anything else
+
+A photograph of a real page has no true white in it. The paper meters as a mid
+grey, so a density-driven algorithm dutifully inks the entire background and
+you get a grey field instead of a drawing. On a photo of a canvas the paper
+ground sat at 0.61 luminance; `--white 0.62` was the difference between mush
+and a legible image. `--auto-levels` will not save you here, because the 98th
+percentile is still well above the paper.
+
+`--blur` matters for a second class of source: anything whose tone is already
+dithered - a halftone, a hatched engraving, another scribble drawing. The
+loop-based fills have a characteristic cell size, and when the source's own
+texture is near that size the two beat against each other and the output
+clumps into rosettes. Softening the source first removes the beat. The greedy
+walk is immune, having no cell size to beat against.
+
 ## The four algorithms
 
 **`cycloid.py` — tone-modulated loops.** One pen path snakes across the image
@@ -129,3 +145,6 @@ of them, trading one pen lift for each ruled line removed.
 - `contour` is feature-aware in the sense that it follows the form. It does not
   do the other half of Chiu et al., which varies loop *structure* near edges to
   keep them crisp.
+- `contour` also needs a source whose structure is smooth at the scale of the
+  line spacing. On a busy one the orientation field picks up the noise instead
+  of the shape; `--blur` and `--field-smooth` are the controls for that.

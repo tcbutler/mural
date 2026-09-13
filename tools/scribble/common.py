@@ -10,10 +10,23 @@ def load_gray(path, width=800):
     return np.asarray(im, dtype=np.float64) / 255.0
 
 
-def darkness(gray, gamma=1.0, floor=0.0, ceil=1.0):
-    """Target ink coverage in [0,1]. gamma<1 lifts midtones."""
-    d = (1.0 - gray) ** gamma
-    return np.clip(floor + d * (ceil - floor), 0.0, 1.0)
+def levels(gray, black=0.0, white=1.0):
+    """Remap luminance so `white` and anything above it becomes paper.
+
+    Any photograph of a real page has no true white in it - the paper reads as
+    a mid grey once the camera has metered for the room. Feed that straight to
+    a density-driven algorithm and it dutifully inks the whole background, so
+    a white point is not a nicety here, it is the difference between a drawing
+    and a grey field.
+    """
+    if white <= black:
+        return np.clip(gray, 0.0, 1.0)
+    return np.clip((gray - black) / (white - black), 0.0, 1.0)
+
+
+def auto_levels(gray, lo_pct=2.0, hi_pct=98.0):
+    """Black and white points from the image's own luminance percentiles."""
+    return float(np.percentile(gray, lo_pct)), float(np.percentile(gray, hi_pct))
 
 
 def sample(field, x, y):

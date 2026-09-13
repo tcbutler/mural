@@ -27,8 +27,10 @@ import argparse
 import sys
 import numpy as np
 
-from common import load_gray, render, to_svg, tone_report, pen_travel
+from common import (auto_levels, levels, load_gray, render, to_svg,
+                    tone_report)
 from contour import contour_scribble
+from field import blur as blur_field
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
 from stitch import tidy, travel
@@ -52,6 +54,22 @@ def main(argv=None):
                     help="tsp: cut tour edges longer than this, so long transits "
                          "become pen lifts instead of ruled lines")
     ap.add_argument("--gamma", type=float, default=1.0, help="<1 lifts midtones")
+    ap.add_argument("--white", type=float, default=None, metavar="L",
+                    help="luminance (0-1) treated as bare paper; essential for "
+                         "photos, whose paper is never actually white")
+    ap.add_argument("--black", type=float, default=None, metavar="L",
+                    help="luminance (0-1) treated as solid ink")
+    ap.add_argument("--blur", type=float, default=0.0, metavar="SIGMA",
+                    help="soften the source first. Needed when the source is "
+                         "itself a drawing or a halftone, whose tone already "
+                         "has structure at the scale of the strokes")
+    ap.add_argument("--field-smooth", type=float, default=1.0, metavar="K",
+                    help="contour: how far to smooth the orientation field. "
+                         "Raise it for busy sources, whose fine detail "
+                         "otherwise swamps the shape underneath")
+    ap.add_argument("--auto-levels", action="store_true",
+                    help="take the black and white points from the image's own "
+                         "2nd and 98th luminance percentiles")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--no-lift", action="store_true",
                     help="cycloid: never lift the pen (one unbroken line, ink on white)")
@@ -68,6 +86,18 @@ def main(argv=None):
         ap.error("give an image path or --chart")
 
     gray = chart() if args.chart else load_gray(args.image, args.width)
+    black, white = args.black, args.white
+    if args.auto_levels:
+        a, b = auto_levels(gray)
+        black = a if black is None else black
+        white = b if white is None else white
+    if black is not None or white is not None:
+        black = 0.0 if black is None else black
+        white = 1.0 if white is None else white
+        print(f"  levels: black {black:.3f}, white {white:.3f}")
+        gray = levels(gray, black, white)
+    if args.blur > 0:
+        gray = np.clip(blur_field(gray, args.blur), 0.0, 1.0)
     d = np.clip((1.0 - gray) ** args.gamma, 0.0, 1.0)
     h, w = d.shape
 
@@ -76,8 +106,10 @@ def main(argv=None):
                               lift=not args.no_lift)
         blur = args.row
     elif args.algo == "contour":
+        k = args.field_smooth
         pl = contour_scribble(d, gray=gray, d_sep=args.row, pen=args.pen,
-                              seed=args.seed, lift=not args.no_lift)
+                              seed=args.seed, lift=not args.no_lift,
+                              sigma_grad=1.6 * k, sigma_tensor=6.0 * k)
         blur = args.row
     elif args.algo == "tsp":
         closed, pts = tsp_art(d, n_points=args.points, seed=args.seed)
