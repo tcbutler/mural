@@ -2,15 +2,23 @@
 """Turn an image into a tone-matched scribble, as SVG for the plotter.
 
     python3 scribble.py photo.jpg -o out.svg --row 9 --pen 1.4
-    python3 scribble.py photo.jpg --algo greedy --seed 4
+    python3 scribble.py photo.jpg --algo contour --seed 4
+    python3 scribble.py photo.jpg --algo greedy --join 8
+    python3 scribble.py photo.jpg --algo tsp --points 20000 --break-edges 30
     python3 scribble.py --chart            # synthetic tone chart, with metrics
 
-Two algorithms, both non-deterministic (pass --seed for a repeatable run):
+Four algorithms:
 
-  cycloid  a single pen path snaking across the image, tracing a loop whose
-           advance rate is set by local darkness. Loopy, dense, one stroke.
+  cycloid  a pen path snaking across the image in rows, tracing a loop whose
+           advance rate is set by local darkness. Loopy and dense.
+  contour  the same loop, but the guide path follows the image's own structure
+           instead of scanlines, so the loops lean with the form.
   greedy   a random walk that repeatedly picks the darkest nearby segment and
-           subtracts the ink it lays. Sketchy, structure-following.
+           subtracts the ink it lays. Sketchy, edge-seeking, lift-heavy.
+  tsp      stipple to the image's density, then one tour through every dot.
+           Almost no pen lifts, and no way to get dark.
+
+The first three are non-deterministic; --seed makes a run repeatable.
 
 Output units are millimetres of paper, so --pen is a real nib width and --row
 a real line spacing. Check the tone report before committing a long plot.
@@ -25,6 +33,7 @@ from cycloid import cycloid_scribble
 from greedy import greedy_scribble
 from stitch import tidy, travel
 from synth import chart
+from tsp import tsp_art, break_long
 
 
 def main(argv=None):
@@ -32,12 +41,16 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("image", nargs="?", help="source image (omit with --chart)")
     ap.add_argument("--chart", action="store_true", help="use the synthetic tone chart")
-    ap.add_argument("--algo", choices=("cycloid", "contour", "greedy"), default="cycloid")
+    ap.add_argument("--algo", choices=("cycloid", "contour", "greedy", "tsp"), default="cycloid")
     ap.add_argument("-o", "--out", default="scribble.svg")
     ap.add_argument("--width", type=int, default=760, help="working raster width in px")
     ap.add_argument("--row", type=float, default=9.0, help="cycloid/contour: line spacing (px)")
     ap.add_argument("--pen", type=float, default=1.4, help="nib width (px at working size)")
     ap.add_argument("--strokes", type=int, default=40000, help="greedy: stroke budget")
+    ap.add_argument("--points", type=int, default=20000, help="tsp: stipple point count")
+    ap.add_argument("--break-edges", type=float, default=0.0, metavar="PX",
+                    help="tsp: cut tour edges longer than this, so long transits "
+                         "become pen lifts instead of ruled lines")
     ap.add_argument("--gamma", type=float, default=1.0, help="<1 lifts midtones")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--no-lift", action="store_true",
@@ -66,6 +79,11 @@ def main(argv=None):
         pl = contour_scribble(d, gray=gray, d_sep=args.row, pen=args.pen,
                               seed=args.seed, lift=not args.no_lift)
         blur = args.row
+    elif args.algo == "tsp":
+        closed, pts = tsp_art(d, n_points=args.points, seed=args.seed)
+        pl = break_long(closed[0], args.break_edges)
+        print(f"  {len(pts)} stipple points")
+        blur = 9.0
     else:
         pl = greedy_scribble(d, n_strokes=args.strokes, pen=args.pen, seed=args.seed)
         blur = 9.0
