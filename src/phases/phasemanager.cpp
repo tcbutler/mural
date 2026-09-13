@@ -15,7 +15,8 @@
 #include <stdexcept>
 #include <cstring>
 
-PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner) {
+PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner, NetWatch* netWatch) {
+    this->netWatch = netWatch;
     retractBeltsPhase = new RetractBeltsPhase(this, movement);
     setTopDistancePhase = new SetTopDistancePhase(this, movement, pen);
     extendToHomePhase = new ExtendToHomePhase(this, movement, runner);
@@ -121,6 +122,12 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     // a second press would re-run setOrigin() in the middle of the travel - which
     // re-zeros the belt position and loses the machine's idea of where it is.
     root["startedHoming"] = startedHoming;
+    // Link health, so "the web UI won't load" can be answered with a number
+    // instead of a guess. rssi is dBm (roughly: -50 excellent, -70 usable, -80
+    // and below is where this machine started dropping packets); wifiReconnects
+    // counts drops recovered since boot.
+    root["rssi"] = netWatch->getRssi();
+    root["wifiReconnects"] = netWatch->getReconnects();
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;

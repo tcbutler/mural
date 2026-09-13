@@ -4,6 +4,7 @@
 #include "movement.h"
 #include "pen.h"
 #include "runner.h"
+#include "netwatch.h"
 #include <ESPAsyncWebServer.h>
 class SvgSelectPhase;
 class RetractBeltsPhase;
@@ -18,6 +19,8 @@ class PhaseManager {
     Phase* beginDrawingPhase;
     Phase* drawingPhase;
     Phase* resumeDrawingPhase;
+    // Reported in the state document so the UI can show link health.
+    NetWatch* netWatch;
     Movement* movement;
     // Kept so respondWithState can report the calibrated pen-holder geometry.
     Pen* pen;
@@ -32,7 +35,7 @@ class PhaseManager {
 
     public:
     enum PhaseNames {RetractBelts, SetTopDistance, ExtendToHome, PenCalibration, SvgSelect, BeginDrawing, Drawing, ResumeDrawing};
-    PhaseManager(Movement* movement, Pen* pen, Runner* runner);
+    PhaseManager(Movement* movement, Pen* pen, Runner* runner, NetWatch* netWatch);
     Phase* getCurrentPhase();
     void setPhase(PhaseNames name);
     void respondWithState(AsyncWebServerRequest *request);

@@ -56,6 +56,7 @@ const KNOWN_FAULTS = {
     'no-pen-cal': 'no stored pen angle, so pen calibration is required',
     'extend-fail': '/extendToHome is refused (firmware: "Not ready")',
     'extend-stuck': '/extendToHome is accepted but the move never completes',
+    'weak-wifi': 'the device reports a poor signal and past reconnects',
 };
 
 for (const f of FAULTS) {
@@ -93,6 +94,10 @@ const state = {
     // Movement::hasStartedHoming - true from the moment an extend/home move is
     // actually commanded (not merely requested; see Movement::extendToPoint).
     startedHoming: false,
+    // NetWatch link health. A healthy bench value; --fault=weak-wifi reports the
+    // sort of signal that made the real machine unreachable.
+    rssi: FAULTS.has('weak-wifi') ? -86 : -52,
+    wifiReconnects: FAULTS.has('weak-wifi') ? 7 : 0,
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
     // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept

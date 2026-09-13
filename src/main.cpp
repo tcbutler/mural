@@ -12,6 +12,7 @@
 #include "pen.h"
 #include "display.h"
 #include "statusled.h"
+#include "netwatch.h"
 #include "phases/phasemanager.h"
 #include <stdexcept>
 
@@ -23,8 +24,18 @@ Runner *runner;
 Pen *pen;
 Display *display;
 StatusLed *statusLed;
+NetWatch netWatch;
 
 PhaseManager* phaseManager;
+
+// index.html is served by hand rather than by serveStatic so it can carry its
+// own Cache-Control - see the serving comment in setup(). Registered for both
+// "/" and "/index.html", since either can be the URL someone lands on.
+void sendIndex(AsyncWebServerRequest *request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/www/index.html", "text/html");
+    response->addHeader("Cache-Control", "no-cache");
+    request->send(response);
+}
 
 void notFound(AsyncWebServerRequest *request)
 {
@@ -302,6 +313,11 @@ void setup()
 
     Serial.println("Started mDNS for mural");
 
+    // Watch the link from here on. Without this, a dropped connection left the
+    // machine off the network - and mural.local unresolvable - until a power
+    // cycle. See netwatch.h.
+    netWatch.begin("mural");
+
     // Wireless firmware/filesystem updates (`pio run -e esp32dev-ota -t
     // upload` / `-t uploadfs`), so reflashing doesn't require detaching the
     // wiring to get at USB. Motors are left disabled/idle during an update:
@@ -321,7 +337,27 @@ void setup()
     runner->setEventSource(&events);
     Serial.println("Initialized runner");
 
-    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-cache");
+    // --- Serving the UI ----------------------------------------------------
+    //
+    // A page load pulls ~400KB across 13 files. Everything was served
+    // "no-cache", so every one of them came down again on every visit - fine on
+    // a desk, painful over a marginal WiFi link where round-trips were measured
+    // at 400-1400ms.
+    //
+    // index.html stays no-cache: it is the entry point, and it has to be the
+    // thing that tells a browser about a freshly flashed UI. Everything it
+    // references gets a short max-age, so a revisit inside the window costs no
+    // requests at all. The window is deliberately minutes rather than the usual
+    // year-plus-fingerprinted-filename, because these assets are not
+    // fingerprinted - a filesystem flash reuses every name, so the max-age is
+    // also the longest anyone can be served a stale asset afterwards. Ten
+    // minutes trades a reload-after-flashing (or one hard refresh) for not
+    // re-downloading the UI on every visit.
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+              { sendIndex(request); });
+    server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest *request)
+              { sendIndex(request); });
+    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("max-age=600");
 
     server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->handleCommand(request); });
@@ -451,7 +487,7 @@ void setup()
 
     Serial.println("Finished setting up the server");
 
-    phaseManager = new PhaseManager(movement, pen, runner);
+    phaseManager = new PhaseManager(movement, pen, runner, &netWatch);
 
     server.begin();
     Serial.println("Server started");
@@ -464,6 +500,7 @@ void setup()
 void loop()
 {
     statusLed->tick();
+    netWatch.tick();
     // Only service OTA while the machine is idle: an OTA transfer blocks
     // loop() for its duration, which would freeze step generation (pen
     // down against the wall, belts stalled mid-move). Gating on both the
