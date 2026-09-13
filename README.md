@@ -98,11 +98,24 @@ the grouped version reads more strongly despite using fewer inks. It costs more
 ink and time, because rendering a tint as hatching means actually drawing it
 rather than swapping to a paler pen.
 
-A caveat worth knowing before you try it on the wrong thing: run colour
-separation over a *gradient*-heavy image and pale regions tend to get quantised
-into near-white palette entries and dropped. The wordmark image above loses its
-blue disc and green ramp entirely at five pens. Flat art separates cleanly;
-airbrushed art does not.
+A caveat worth knowing before you try it on the wrong thing. The wordmark image
+looks like it should be perfect for five pens — five obvious hues — and it very
+nearly is:
+
+<img src="images/style-examples/crossHatch45-color-word.png" width="420" alt="The wordmark test image separated into five pens">
+
+<sub>5 pens · 117 strokes · 6.9 m. Blue, yellow, red and navy all separate; the green ramp does not.</sub>
+
+The green loses out to something that isn't a colour at all: the soft drop
+shadow. 17% of that image's non-paper pixels are near-neutral grey and 84% of
+those are the shadow, which is a large enough mass of tone to claim a pen on
+merit. Asking for *more* pens makes it worse rather than better — at six, the
+extra pens go to a second and third shade of grey and both the blue disc and the
+green ramp drop out.
+
+So: flat art with distinct hues separates cleanly. Art with large soft shadows or
+broad pale washes spends pens on tone, and hue grouping (above) is the better
+tool for it.
 
 Regenerate any of these with:
 

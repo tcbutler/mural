@@ -331,6 +331,105 @@ const K_MEANS_MAX_ITERATIONS = 10;
 // the sampled pixel list) rather than randomly, so a given source image
 // quantizes the same way every run. Returns the per-pixel cluster
 // assignment plus the resulting centroid colors as an auto-named palette.
+
+// Bins per axis for the seeding histogram. 16 gives 4096 cells, which separates
+// hues comfortably while staying coarse enough that a gradient's shades fall
+// into a handful of neighbouring cells rather than hundreds.
+const SEED_HISTOGRAM_BINS = 16;
+// A colour has to cover at least this fraction of the non-background pixels
+// before it can seed a pen. Stops a few stray anti-aliasing pixels becoming an
+// ink the machine stops and asks you for.
+const SEED_MIN_BIN_FRACTION = 0.001;
+
+/**
+ * Chooses initial k-means centroids in COLOUR space.
+ *
+ * This used to take samples at evenly spaced positions in the sample array -
+ * which is raster-scan order, so which colours got a seed depended on where they
+ * sat in the image rather than on what they were. Two consequences, both visible
+ * on the MURAL2.0 test image at five pens: a large gradient occupies most of the
+ * scan and collects several seeds for shades of one hue, while a small saturated
+ * shape gets none at all. It detected two blues and two navies, and lost the
+ * yellow circle and the red rectangle entirely.
+ *
+ * Samples are collected into a coarse histogram, so a scattering of
+ * anti-aliasing pixels cannot become a pen, and centroids are then picked
+ * farthest-first from the populated bins - the deterministic cousin of
+ * k-means++. Determinism matters here beyond tidiness: the same image has to
+ * ask for the same inks every time, or re-rendering a drawing sends you back to
+ * the pen drawer.
+ */
+function seedCentroids(
+    samples: { r: number, g: number, b: number }[],
+    clusterCount: number,
+): { r: number, g: number, b: number }[] {
+    const bins = new Map<number, { r: number, g: number, b: number, count: number }>();
+    const axis = (value: number) => Math.min(SEED_HISTOGRAM_BINS - 1, Math.max(0, Math.floor(value * SEED_HISTOGRAM_BINS)));
+
+    for (const sample of samples) {
+        const key = (axis(sample.r) << 10) | (axis(sample.g) << 5) | axis(sample.b);
+        const bin = bins.get(key);
+        if (bin) {
+            bin.r += sample.r; bin.g += sample.g; bin.b += sample.b; bin.count++;
+        } else {
+            bins.set(key, { r: sample.r, g: sample.g, b: sample.b, count: 1 });
+        }
+    }
+
+    const toCandidate = (bin: { r: number, g: number, b: number, count: number }) =>
+        ({ r: bin.r / bin.count, g: bin.g / bin.count, b: bin.b / bin.count, count: bin.count });
+
+    // Spread in plain RGB. An earlier attempt weighted chroma over lightness and
+    // anchored on paper white, reasoning that a soft shadow's long grey axis
+    // should not win pens. It did fix the MURAL2.0 image - and broke Bluey,
+    // whose large pale areas then got no seed and fragmented (940 coherent
+    // strokes became 747 scattered ones). Trading one image's failure for
+    // another's is not a fix, so the weighting is gone and the plain metric
+    // stays.
+    const seedDistance = (a: { r: number, g: number, b: number }, b: { r: number, g: number, b: number }) => {
+        const dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+        return dr * dr + dg * dg + db * db;
+    };
+
+    const all = [...bins.values()].map(toCandidate);
+    const floor = samples.length * SEED_MIN_BIN_FRACTION;
+    let candidates = all.filter(candidate => candidate.count >= floor);
+    if (candidates.length < clusterCount) {
+        // Not enough substantial colours to fill the requested pens; fall back to
+        // every bin rather than returning fewer centroids than asked for.
+        candidates = all;
+    }
+
+    // Ordered explicitly rather than relying on Map insertion order, which is
+    // scan order - the very thing this function exists to stop mattering.
+    candidates.sort((a, b) =>
+        b.count - a.count || a.r - b.r || a.g - b.g || a.b - b.b);
+
+    // Paper white is an implicit, already-chosen point: the machine draws on it,
+    // so the first pen worth having is the one least like it. Without this the
+    // first seed is simply the most populous bin, which on any image with a
+    // large soft shadow or a pale wash is a near-neutral - a pen spent on the
+    // least ink-like thing in the picture.
+    const chosen = [candidates[0]];
+    while (chosen.length < clusterCount && chosen.length < candidates.length) {
+        let best = candidates[0];
+        let bestDistance = -1;
+        for (const candidate of candidates) {
+            let nearest = Infinity;
+            for (const picked of chosen) {
+                nearest = Math.min(nearest, seedDistance(candidate, picked));
+            }
+            if (nearest > bestDistance) {
+                bestDistance = nearest;
+                best = candidate;
+            }
+        }
+        chosen.push(best);
+    }
+
+    return chosen.map(({ r, g, b }) => ({ r, g, b }));
+}
+
 function kMeansQuantize(imageData: ImageData, k: number): { indices: Int16Array, palette: paper.Color[] } {
     const pixelCount = imageData.width * imageData.height;
     const samples: { r: number, g: number, b: number, pixelIndex: number }[] = [];
@@ -355,12 +454,7 @@ function kMeansQuantize(imageData: ImageData, k: number): { indices: Int16Array,
     }
 
     const clusterCount = Math.max(1, Math.min(k, samples.length));
-    const centroids: { r: number, g: number, b: number }[] = [];
-    for (let c = 0; c < clusterCount; c++) {
-        const sampleIndex = Math.floor((c + 0.5) * samples.length / clusterCount);
-        const s = samples[Math.min(sampleIndex, samples.length - 1)];
-        centroids.push({ r: s.r, g: s.g, b: s.b });
-    }
+    const centroids = seedCentroids(samples, clusterCount);
 
     const assignment = new Int16Array(samples.length);
 
@@ -456,6 +550,36 @@ export function vectorizeImageDataColor(imageData: ImageData, turdSize: number, 
         const result = kMeansQuantize(imageData, colorCount);
         paletteColors = result.palette;
         indices = result.indices;
+    }
+
+    // A palette entry that no pixel ends up assigned to is a pen the machine
+    // stops and asks you to insert so it can draw nothing with it. Not
+    // hypothetical: on the MURAL2.0 test image, k-means put 168,693 samples in a
+    // pale cluster whose pixels classifyWithFringeResolution then resolved
+    // elsewhere, leaving one of five requested pens emitting zero coordinates
+    // and an empty mask in the SVG.
+    //
+    // Note this counts what the CLASSIFIER produced, not what k-means assigned -
+    // they are different arrays, and the gap between them is exactly the
+    // problem.
+    const pixelCounts = new Array(paletteColors.length).fill(0);
+    for (let i = 0; i < indices.length; i++) {
+        const index = indices[i];
+        if (index !== BACKGROUND_INDEX && index >= 0 && index < pixelCounts.length) {
+            pixelCounts[index]++;
+        }
+    }
+    const usedIndexes = paletteColors.map((_, index) => index).filter(index => pixelCounts[index] > 0);
+    if (usedIndexes.length > 0 && usedIndexes.length < paletteColors.length) {
+        const reindex = new Map(usedIndexes.map((oldIndex, newIndex) => [oldIndex, newIndex]));
+        for (let i = 0; i < indices.length; i++) {
+            const index = indices[i];
+            indices[i] = index === BACKGROUND_INDEX ? BACKGROUND_INDEX : (reindex.get(index) ?? BACKGROUND_INDEX);
+        }
+        paletteColors = usedIndexes.map(index => paletteColors[index]);
+        if (paletteNames) {
+            paletteNames = usedIndexes.map(index => paletteNames![index]);
+        }
     }
 
     // Order light -> dark (docs/multi-color.md section 5), remapping indices
