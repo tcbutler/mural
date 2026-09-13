@@ -66,12 +66,18 @@ def plot_minutes(drawn_px, lifts, width_px):
     return seconds / 60.0
 
 
-# Fitted against one human's blind rankings of 5 sheets - 80 pairwise
+# Fitted against one human's blind rankings of 6 sheets - 98 pairwise
 # preferences - not chosen. The starting guess of (0.45, 0.35, 0.20)
-# reproduced 71% of them; this reproduces 95%.
+# reproduced 69% of them; this reproduces 91%. Refitting on the sixth sheet
+# landed on exactly the same weights as the first five, which is the best
+# evidence available that they are not an artefact of the sample size.
+#
+# The cost weight is the soft one: agreement sits between 88% and 91% for
+# anything from 0.10 to 0.40, so 0.15 is the peak of a very flat ridge. Do not
+# read meaning into its second digit.
 #
 # The tone weight is zero, and that is the finding. Ranked on tone alone the
-# pairs came out at 50% - a coin flip. It does not mean tone is irrelevant to
+# pairs come out at 48% - worse than a coin flip. It does not mean tone is irrelevant to
 # a drawing: a render with badly wrong greys would be illegible, and the
 # legibility term already measures tonal agreement at a coarse scale. It means
 # the *residual* tone-accuracy term adds nothing once legibility is accounted
