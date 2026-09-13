@@ -128,6 +128,17 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     // counts drops recovered since boot.
     root["rssi"] = netWatch->getRssi();
     root["wifiReconnects"] = netWatch->getReconnects();
+    // Free heap, and the largest single block of it. Measured serving the UI on
+    // a device that had been up an hour: 165KB of worker.js came down at 20KB/s,
+    // index.html managed 4,129 of 44,172 bytes in 30 seconds (137 B/s) and
+    // then stalled, and OTA died partway. Small requests stayed fine
+    // throughout, which is what a starved or fragmented heap looks like from
+    // the outside - AsyncTCP cannot get buffers, so anything sustained crawls.
+    // largestFreeBlock matters as much as the total: OTA and the async server
+    // need contiguous allocations, and fragmentation shows up here first.
+    root["freeHeap"] = ESP.getFreeHeap();
+    root["largestFreeBlock"] = ESP.getMaxAllocHeap();
+    root["uptimeSeconds"] = millis() / 1000;
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;

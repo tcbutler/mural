@@ -103,6 +103,11 @@ const state = {
     // sort of signal that made the real machine unreachable.
     rssi: FAULTS.has('weak-wifi') ? -86 : -52,
     wifiReconnects: FAULTS.has('weak-wifi') ? 7 : 0,
+    // Heap health. A comfortable idle figure; the real device is worth watching
+    // over hours, since a starved heap is what makes sustained transfers crawl.
+    freeHeap: 180000,
+    largestFreeBlock: 110000,
+    uptimeSeconds: 0,
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
     // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept
