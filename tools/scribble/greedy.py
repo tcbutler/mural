@@ -14,10 +14,22 @@ import numpy as np
 
 
 def greedy_scribble(d_target, n_strokes=45000, pen=1.4, seg_lo=5.0, seg_hi=22.0,
-                    k=24, turn=2.4, seed=None, give_up=0.06, samples=20):
+                    k=24, turn=2.4, seed=None, give_up=None, samples=20):
     rng = np.random.default_rng(seed)
     h, w = d_target.shape
-    residual = d_target.copy()
+    # The residual is held in units of *ink still owed*, not of coverage.
+    # Ink landing on ink covers no new paper, so a region asking for 90%
+    # coverage needs far more than 0.9 units of line through it; the Poisson
+    # law that cycloid.py uses for its advance rate inverts the same way here.
+    # Without it the walk under-inks every dark region.
+    residual = -np.log(np.clip(1.0 - 0.985 * d_target, 1e-3, 1.0))
+    if give_up is None:
+        # Relative to what this image is actually asking for. A fixed floor
+        # silently becomes "skip most of the picture" on a lightly-inked
+        # image, which reads as the algorithm failing when it is really the
+        # threshold being in the wrong units.
+        ink = residual[residual > 1e-3]
+        give_up = 0.25 * float(np.median(ink)) if ink.size else 0.06
     side = 0.5 * (pen - 1.0)        # ink spilling either side of the centreline
     ts = np.linspace(0.0, 1.0, samples)[None, :]
 
@@ -33,25 +45,29 @@ def greedy_scribble(d_target, n_strokes=45000, pen=1.4, seg_lo=5.0, seg_hi=22.0,
         pad[:h, :w] = residual
         return pad.reshape(ch, CELL, cw, CELL).max(axis=(1, 3))
 
-    def pay(a, b):
-        """Subtract the ink the stroke a->b actually puts on the paper.
+    # Ink is paid into a band, not onto a line. A pixel asking for 0.3
+    # coverage is asking for a line to pass near it three times in ten, not
+    # for one line straight through it - so charging the centreline a full
+    # 1.0 pays off a light region after a single stroke and the walk keeps
+    # coming back. Spreading the same total across a band of PAY_R either
+    # side makes the units right: a stroke contributes `pen` units of covered
+    # area per unit length, wherever that area lands.
+    PAY_R = 5
+    offs = np.arange(-PAY_R, PAY_R + 1, dtype=np.float64)
+    per_off = pen / len(offs)
 
-        A pixel the nib crosses is paid in full; the nib's extra width pays its
-        neighbours pro rata. Skip this and the walk keeps finding the same dark
-        pixels attractive and hammers them to black."""
+    def pay(a, b):
+        """Subtract the covered area the stroke a->b contributes locally."""
         seg = b - a
         length = float(np.hypot(*seg))
         n = max(2, int(length) + 1)
         t = np.linspace(0.0, 1.0, n)[:, None]
         pts = a[None, :] + seg[None, :] * t
         nrm = np.array([-seg[1], seg[0]]) / (length + 1e-9)
-        for off, amt in ((0.0, 1.0), (1.0, side), (-1.0, side)):
-            if amt <= 0.0:
-                continue
-            q = pts + nrm[None, :] * off
-            xs = np.clip(q[:, 0], 0, w - 1).astype(np.int32)
-            ys = np.clip(q[:, 1], 0, h - 1).astype(np.int32)
-            np.subtract.at(residual, (ys, xs), amt)
+        q = pts[None, :, :] + nrm[None, None, :] * offs[:, None, None]
+        xs = np.clip(q[..., 0], 0, w - 1).astype(np.int32).ravel()
+        ys = np.clip(q[..., 1], 0, h - 1).astype(np.int32).ravel()
+        np.subtract.at(residual, (ys, xs), per_off)
 
     # Restart targets, darkest first. Rebuilding this is the one expensive
     # operation in the loop, so spend it once per batch of restarts rather
