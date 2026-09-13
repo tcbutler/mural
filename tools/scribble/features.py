@@ -25,8 +25,26 @@ def _chromaticity(rgb):
     return rgb / s
 
 
+ANALYSIS_WIDTH = 400
+
+
 def describe(rgb, luma=None):
-    """Return a dict of descriptors for an HxWx3 image in [0,1]."""
+    """Return a dict of descriptors for an HxWx3 image in [0,1].
+
+    Always measured at a fixed analysis width, never at whatever size the
+    render happens to use. Several of these descriptors are sensitive to
+    resolution - the chromatic clustering subsamples, the texture ratio is a
+    comparison of two fixed blur radii - so the same photo at 600px and 900px
+    was producing different preprocessing decisions. A default that changes
+    when you change the output size is not a default.
+    """
+    if rgb.shape[1] != ANALYSIS_WIDTH:
+        from PIL import Image
+        h2 = max(1, round(rgb.shape[0] * ANALYSIS_WIDTH / rgb.shape[1]))
+        im = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+        rgb = np.asarray(im.resize((ANALYSIS_WIDTH, h2), Image.LANCZOS),
+                         dtype=np.float64) / 255.0
+        luma = None
     if luma is None:
         luma = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
     h, w = luma.shape

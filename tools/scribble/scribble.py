@@ -30,14 +30,61 @@ import numpy as np
 from common import (auto_levels, levels, load_gray, render, render_layers,
                     to_svg, to_svg_layers, tone_report)
 from contour import contour_scribble
+from defaults import preprocess, suggest
+from features import describe
 from field import blur as blur_field, focus_map
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
+from score import evaluate
 from stitch import tidy, travel
 from separate import (auto_pens, load_rgb, parse_pens, separate, to_hex,
                       white_balance)
 from synth import chart
 from tsp import tsp_art, break_long
+
+
+def run_auto(args):
+    """Describe the image, preprocess it, pick an algorithm, and say why."""
+    if args.chart or not args.image:
+        raise SystemExit("--auto needs a source image")
+    rgb = load_rgb(args.image, args.width)
+    feats = describe(rgb)
+    d, luma, why = preprocess(rgb, feats)
+    h, w = d.shape
+
+    print(f"{args.image}  ({w}x{h})")
+    for key in ("warm", "blur", "levels", "gamma", "focus"):
+        val, reason = why[key]
+        shown = (f"{val[0]:.2f}-{val[1]:.2f}" if isinstance(val, tuple)
+                 else f"{val:.2f}")
+        print(f"  {key:7} {shown:>11}   {reason}")
+    cfg, reason = suggest(feats, args.prefer)
+    print(f"  {'algo':7} {cfg['algo']:>11}   {reason}")
+    print(f"  ink demand {d.mean():.3f} of the page")
+
+    for k, v in cfg.items():
+        if k == "algo":
+            args.algo = v
+        elif k == "break_edges":
+            args.break_edges = v
+        elif hasattr(args, k):
+            setattr(args, k, v)
+
+    pl = build(d, args, gray=luma)
+    if not args.no_order:
+        pl = tidy(pl, max_gap=getattr(args, "join", 0.0))
+    to_svg(pl, (w, h), pen_mm=args.pen, path=args.out)
+    if args.preview:
+        render(pl, (w, h), pen_px=args.pen).save(args.preview)
+    drawn, up = travel(pl)
+    blur_px = args.row if cfg["algo"] in ("cycloid", "contour") else 9.0
+    ev = evaluate(render(pl, (w, h), pen_px=args.pen), d, blur_px, drawn,
+                  max(0, len(pl) - 1), w)
+    print(f"{args.out}: {len(pl)} strokes, {max(0, len(pl)-1)} pen lifts, "
+          f"{drawn/1000:.1f}k px drawn")
+    print(f"  scored: legibility {ev['legibility']:.3f}, tone RMS "
+          f"{ev['tone_rms']:.3f}, about {ev['minutes']:.0f} min to plot")
+    return 0
 
 
 def focus_mask(gray, weight):
@@ -151,6 +198,14 @@ def main(argv=None):
     ap.add_argument("--paper", type=float, default=1.0, metavar="G",
                     help="with --pens: paper gain. Below 1 treats more of the "
                          "image as bare paper and spends less ink")
+    ap.add_argument("--auto", action="store_true",
+                    help="read the image and choose preprocessing and an "
+                         "algorithm from it, printing why for each decision")
+    ap.add_argument("--prefer", choices=("picture", "speed", "texture"),
+                    default="picture",
+                    help="with --auto: what to optimise. 'picture' is the best "
+                         "drawing, 'speed' the shortest plot, 'texture' the "
+                         "loop-scribble look")
     ap.add_argument("--focus", type=float, default=0.0, metavar="W",
                     help="hold back ink where the photo is out of focus, 0-1. "
                          "Uses the source's own depth of field to separate "
@@ -184,6 +239,9 @@ def main(argv=None):
 
     if not args.chart and not args.image:
         ap.error("give an image path or --chart")
+
+    if args.auto:
+        return run_auto(args)
 
     if args.pens:
         return run_colour(args)

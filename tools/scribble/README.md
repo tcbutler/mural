@@ -18,6 +18,42 @@ python3 scribble.py photo.jpg --algo tsp --points 20000 --break-edges 30
 python3 scribble.py --chart                       # ramp + sphere, with metrics
 ```
 
+## Smart defaults
+
+```
+python3 scribble.py photo.jpg --auto -o out.svg
+python3 scribble.py photo.jpg --auto --prefer speed
+python3 sweep.py corpus/*.jpg -o sweep.json      # re-fit against your own images
+```
+
+`--auto` reads the image, decides the preprocessing, picks an algorithm, and
+prints why for each decision. `features.py` provides the descriptors, measured
+at a fixed analysis width - several of them are resolution-sensitive, and a
+default that changes when you change the output size is not a default.
+
+**The fitted result is that the algorithm barely matters.** Across the test
+corpus the median gap between the best config and the second best was 0.028 of
+composite score; always choosing the greedy walk costs 0.018 on average and
+loses by more than 0.05 on three images out of twenty-three. A decision tree
+over image features would be fitting that noise, so there isn't one.
+
+What does change the answer is what you are optimising:
+
+| objective | winner | margin |
+|---|---|---|
+| legibility alone | greedy | 21 of 23 |
+| tone alone | greedy, then cycloid | 11 and 10 of 23 |
+| plot time alone | tsp | 22 of 23 |
+
+TSP's cheapness is real rather than an artefact of under-inking - every config
+lands within 15% of its ink budget. A tour that never crosses itself lays every
+unit of line on fresh paper, so it needs about 2.5x less of it for the same
+coverage. The ranking flips between a cost weight of 0.2 and 0.3, which is why
+`--prefer` is one question rather than a classifier.
+
+The preprocessing is where the real decisions are, and each one below exists
+because something here failed without it.
+
 ## Levels, before anything else
 
 A photograph of a real page has no true white in it. The paper meters as a mid
