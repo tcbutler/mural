@@ -28,6 +28,16 @@ jobs:
       - name: Install littlefs-python (for flash-budget gate)
         run: pip install littlefs-python
 
+      # build.py runs the TypeScript build and the Less compile as part of every
+      # firmware/filesystem build, so this job needs the node dependencies just
+      # as much as the TS job does. It never installed them: build.py used to
+      # ignore the exit status of `npm run build`, so a failing bundle step was
+      # silently skipped and the image was packed with no render worker in it -
+      # and the flash-budget gate measured that and passed.
+      - name: Install node dependencies
+        working-directory: tsc
+        run: npm install
+
       - name: Cache PlatformIO packages
         uses: actions/cache@v4
         with:
