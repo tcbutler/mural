@@ -34,10 +34,26 @@ export function pixelLuminance(r: number, g: number, b: number): number {
     return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
+/**
+ * Luminance of a pixel as it would appear on the paper: composited over white.
+ *
+ * The machine draws on white paper, so that is what anything not fully opaque is
+ * seen against. Judging the stored RGB directly - which is what this did, gated
+ * only on `a > 0` - reads a soft drop shadow stored as black at alpha 20 as
+ * solid black rather than as the 8% grey it actually looks like, and traces it
+ * as ink. On a cartoon PNG with a transparent background and a soft shadow, that
+ * turned two thirds of the image into something to draw.
+ *
+ * Fully transparent pixels come out at exactly 255, so they remain background
+ * without needing a special case.
+ */
+export function compositedLuminance(r: number, g: number, b: number, a: number): number {
+    const opacity = a / 255;
+    return pixelLuminance(r, g, b) * opacity + 255 * (1 - opacity);
+}
+
 export function isPixelAtOrDarkerThanThreshold(r: number, g: number, b: number, a: number, threshold: number): boolean {
-    // Fully transparent pixels are treated as background, same as the
-    // existing 1-bit vectorizeImageData path.
-    return a > 0 && pixelLuminance(r, g, b) <= threshold;
+    return compositedLuminance(r, g, b, a) <= threshold;
 }
 
 // Builds the 1-bit bitmap for a single grayscale level: pixels at or darker

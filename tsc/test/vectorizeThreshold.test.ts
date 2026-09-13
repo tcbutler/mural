@@ -80,3 +80,39 @@ test("an anti-aliased edge against white keeps its shape", () => {
     });
     assert.equal(inkPixels(image), 4 * 5);
 });
+
+// --- Transparency -----------------------------------------------------------
+//
+// Reported as "the tracer is doing a bad job of this image now", on a cartoon
+// PNG with a transparent background and a soft drop shadow: the whole
+// background came out hatched. The ink test was `a > 0 && luminance(r,g,b)`,
+// which judges the stored colour rather than the colour on the paper, so a
+// shadow stored as black at alpha 20 read as solid black.
+
+test("a fully transparent pixel is background whatever colour is stored under it", () => {
+    for (const colour of [[0, 0, 0], [255, 255, 255], [122, 176, 224]] as const) {
+        const image = makeImageData(8, 8, () => [colour[0], colour[1], colour[2], 0]);
+        assert.equal(inkPixels(image), 0, `expected transparent ${colour.join(",")} to be background`);
+    }
+});
+
+test("a soft shadow reads as the grey it looks like, not as the black it stores", () => {
+    // Black at 8% opacity over white paper is a very light grey: it should not
+    // be drawn. Before compositing this was luminance 0 - maximum ink.
+    const image = makeImageData(8, 8, () => [0, 0, 0, 20]);
+    assert.equal(inkPixels(image), 0);
+});
+
+test("a half-opaque black still reads as ink", () => {
+    // 50% black over white is mid-grey, well below the threshold, and should
+    // still be drawn - compositing must not simply discard everything with alpha.
+    const image = makeImageData(8, 8, () => [0, 0, 0, 128]);
+    assert.equal(inkPixels(image), 64);
+});
+
+test("opaque pixels are unaffected by compositing", () => {
+    const opaqueDark = makeImageData(8, 8, () => [40, 40, 40, 255]);
+    const opaqueWhite = makeImageData(8, 8, () => [255, 255, 255, 255]);
+    assert.equal(inkPixels(opaqueDark), 64);
+    assert.equal(inkPixels(opaqueWhite), 0);
+});
