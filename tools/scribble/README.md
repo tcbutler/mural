@@ -11,8 +11,9 @@ and for measuring whether the tone actually comes out right.
 ```
 pip install numpy pillow
 python3 scribble.py photo.jpg -o out.svg --preview out.png
-python3 scribble.py photo.jpg --algo greedy --seed 4
-python3 scribble.py --chart          # synthetic ramp + sphere, with metrics
+python3 scribble.py photo.jpg --algo contour     # follows the form
+python3 scribble.py photo.jpg --algo greedy --join 8
+python3 scribble.py --chart                      # ramp + sphere, with metrics
 ```
 
 ## The two algorithms
@@ -38,6 +39,15 @@ advance = 2*pi*r*pen / (demand * row_step)
 Tone is then right by construction, and the knobs that remain — loop radius,
 tilt, jitter, guide-path wobble — only change how it looks.
 
+**`contour.py` + `field.py` — the same loop, following the form.** Identical
+loop maths, but the guide path runs along the image's own structure instead of
+along scanlines, so the loops lean with the subject the way hand-drawn scribble
+does. `field.py` builds the orientation field from a structure tensor and
+places evenly-spaced streamlines through it ([Jobard & Lefebvre
+1997](https://www.researchgate.net/publication/2325033)). Measured tone is
+unchanged from the row version, which is the payoff for deriving the advance
+rate rather than tuning it.
+
 **`greedy.py` — residual-darkness walk.** No geometry model at all. Keep a
 buffer of the ink the image still owes. From wherever the pen is, throw out a
 few dozen random candidate segments, score each by the mean residual along it,
@@ -45,7 +55,29 @@ draw the best, subtract the ink you just laid, repeat. Dark areas stay
 attractive until they have been paid off, so density tracks tone. This is the
 family behind Vrellis-style string art and DrawingBotV3's sketch path finders.
 
-Both are non-deterministic; `--seed` makes a run repeatable.
+All three are non-deterministic; `--seed` makes a run repeatable.
+
+## Pen lifts
+
+A lift costs about two seconds whatever the strokes either side of it are
+doing, so on a plot this long the chain count matters more than the ink. The
+greedy walk strands itself constantly and produced ~2,600 chains on a test
+photo. Measured on that image:
+
+| Change | Lifts | Ink | Tone RMS |
+|---|---|---|---|
+| baseline | 2,660 | 98.2k | 0.051 |
+| lighter target (gamma 2.0) | 2,227 | 69.7k | 0.070 |
+| longer strokes (10-45px) | 1,452 | 103.2k | 0.057 |
+| `stitch.order` | 2,660 | 98.2k | 0.051 |
+| `stitch.order` + join 8px | **307** | 105.4k | 0.058 |
+
+Turning the density down is the weak lever: a third less ink bought a sixth
+fewer lifts, and cost more in tone than it saved in time. Ordering the strokes
+nearest-neighbour cut pen-up *travel* 50-fold (646k px to 13k) while changing
+nothing on the paper. Joining strokes whose ends are already within a few nib
+widths is what actually removes lifts, at about 7% more ink. Both live in
+`stitch.py`, behind `--join`.
 
 ## Measuring tone, not eyeballing it
 

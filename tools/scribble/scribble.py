@@ -23,6 +23,7 @@ from common import load_gray, render, to_svg, tone_report, pen_travel
 from contour import contour_scribble
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
+from stitch import tidy, travel
 from synth import chart
 
 
@@ -42,6 +43,12 @@ def main(argv=None):
     ap.add_argument("--no-lift", action="store_true",
                     help="cycloid: never lift the pen (one unbroken line, ink on white)")
     ap.add_argument("--preview", help="also write a raster preview PNG here")
+    ap.add_argument("--join", type=float, default=0.0, metavar="PX",
+                    help="merge strokes whose ends are within this gap, to cut "
+                         "pen lifts (adds a little unasked-for ink)")
+    ap.add_argument("--no-order", action="store_true",
+                    help="skip nearest-neighbour stroke ordering (it is free "
+                         "and changes nothing on the paper, so rarely wanted)")
     args = ap.parse_args(argv)
 
     if not args.chart and not args.image:
@@ -63,13 +70,20 @@ def main(argv=None):
         pl = greedy_scribble(d, n_strokes=args.strokes, pen=args.pen, seed=args.seed)
         blur = 9.0
 
+    raw_lifts = max(0, len(pl) - 1)
+    if not args.no_order:
+        pl = tidy(pl, max_gap=args.join)
+
     to_svg(pl, (w, h), pen_mm=args.pen, path=args.out)
     img = render(pl, (w, h), pen_px=args.pen)
     if args.preview:
         img.save(args.preview)
 
-    length, lifts = pen_travel(pl)
-    print(f"{args.out}: {len(pl)} strokes, {lifts} pen lifts, {length/1000:.1f}k px of ink")
+    drawn, up = travel(pl)
+    lifts = max(0, len(pl) - 1)
+    note = "" if lifts == raw_lifts else f" (from {raw_lifts})"
+    print(f"{args.out}: {len(pl)} strokes, {lifts} pen lifts{note}, "
+          f"{drawn/1000:.1f}k px drawn, {up/1000:.1f}k px pen-up")
     print(tone_report(img, d, blur_px=blur))
     return 0
 
