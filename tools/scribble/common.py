@@ -13,7 +13,8 @@ def load_gray(path, width=800, warm=0.0):
     turns the cat into a hole. Their red-minus-blue differs by more than
     twice, so subtracting some of it separates them.
     """
-    im = Image.open(path).convert("RGB")
+    from separate import _flatten
+    im = _flatten(Image.open(path))
     h = round(im.height * width / im.width)
     im = im.resize((width, h), Image.LANCZOS)
     a = np.asarray(im, dtype=np.float64) / 255.0

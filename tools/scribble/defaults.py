@@ -209,3 +209,32 @@ def suggest(feats, prefer="picture"):
         "best legibility on 21 of 23 test images, and the tone error is the "
         "lowest of any config since the ink accounting was fixed; the cost is "
         "plot time, about 3x the TSP tour")
+
+
+def colour_advice(feats, max_pens=3):
+    """Would this image be better in colour? (n_pens or None, rationale).
+
+    Kept separate from `suggest` because it is a different axis and a
+    different cost: pens mean physical ink you own and a swap you stand there
+    for. The gates are measured, not guessed - a near-neutral image still
+    produces two chromaticity clusters out of a handful of stray pixels, which
+    is why chromatic_fraction has to carry a real share of the frame before
+    hue_separation means anything.
+
+    On the test images this fires for a cartoon hero shot (chroma 0.13, 25% of
+    the frame chromatic, hue separation 0.17), a ginger cat on green, and a
+    coil of coloured wire; it stays quiet for a brown horse on white, whose
+    single hue makes one pen no better than grey.
+    """
+    if (feats["chroma"] > 0.10 and feats["chromatic_fraction"] > 0.20
+            and feats["hue_separation"] > 0.12):
+        n = 3 if feats["chroma"] > 0.15 else 2
+        return min(n, max_pens), (
+            f"{feats['chromatic_fraction']*100:.0f}% of the frame carries colour and the "
+            f"hue groups are {feats['hue_separation']:.2f} apart, so the content is in "
+            f"the hue as much as the tone; {n} pens separate it where grey flattens it")
+    if feats["chroma"] > 0.10:
+        return None, (
+            f"colourful but essentially one hue (separation {feats['hue_separation']:.2f}), "
+            f"so a second pen would draw the same shapes in a different colour")
+    return None, "too little colour for pens to add anything"

@@ -30,7 +30,7 @@ import numpy as np
 from common import (auto_levels, levels, load_gray, render, render_layers,
                     to_svg, to_svg_layers, tone_report)
 from contour import contour_scribble
-from defaults import preprocess, suggest
+from defaults import colour_advice, preprocess, suggest
 from features import describe
 from field import blur as blur_field, focus_map
 from cycloid import cycloid_scribble
@@ -58,6 +58,14 @@ def run_auto(args):
         shown = (f"{val[0]:.2f}-{val[1]:.2f}" if isinstance(val, tuple)
                  else f"{val:.2f}")
         print(f"  {key:7} {shown:>11}   {reason}")
+    pens_n, pens_why = colour_advice(feats)
+    print(f"  {'pens':7} {(str(pens_n) if pens_n else 'mono'):>11}   {pens_why}")
+    if pens_n and args.prefer == "colour":
+        args.pens = str(pens_n)
+        args.algo = "greedy"
+        args.join = 8.0
+        return run_colour(args)
+
     cfg, reason = suggest(feats, args.prefer)
     if cfg is None:
         print(f"  {'algo':7} {'none':>11}   {reason}")
@@ -205,7 +213,7 @@ def main(argv=None):
     ap.add_argument("--auto", action="store_true",
                     help="read the image and choose preprocessing and an "
                          "algorithm from it, printing why for each decision")
-    ap.add_argument("--prefer", choices=("picture", "speed", "texture"),
+    ap.add_argument("--prefer", choices=("picture", "speed", "texture", "colour"),
                     default="picture",
                     help="with --auto: what to optimise. 'picture' is the best "
                          "drawing, 'speed' the shortest plot, 'texture' the "

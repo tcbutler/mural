@@ -119,10 +119,27 @@ def separate(rgb, pens, bits=5, max_coverage=1.0):
 
 def load_rgb(path, width=800):
     from PIL import Image
-    im = Image.open(path).convert("RGB")
+    im = Image.open(path)
+    im = _flatten(im)
     hh = round(im.height * width / im.width)
     im = im.resize((width, hh), Image.LANCZOS)
     return np.asarray(im, dtype=np.float64) / 255.0
+
+
+def _flatten(im):
+    """Composite any alpha onto white before anything reads the pixels.
+
+    PIL's convert("RGB") drops alpha by compositing onto black, so a logo or a
+    cut-out subject on transparency arrives as a subject on a solid black
+    field - and every fill here then dutifully inks the whole background. The
+    paper is white, so transparent means white.
+    """
+    from PIL import Image
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(bg, rgba).convert("RGB")
+    return im.convert("RGB")
 
 
 def parse_pens(spec):
