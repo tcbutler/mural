@@ -192,3 +192,24 @@ def streamlines(tx, ty, coh, d_sep=9.0, d_test_frac=0.55, step=1.0,
                     queue.append((cx, cy))
                     break
     return lines
+
+
+def focus_map(gray, fine=2.0, spread=17, soften=9.0, pct=97.0):
+    """Where is this photograph actually sharp?
+
+    Fine detail survives only where the lens was focused, so the energy left
+    after subtracting a small blur is a usable depth-of-field proxy.
+
+    Spreading that verdict wants a maximum, not an average. Sharpness is a
+    property of a region, and a smooth patch inside a sharp subject - the flank
+    of a cat, a plain wall - carries no detail of its own. Averaging marks it
+    out of focus and knocks the middle out of the subject; taking the local
+    maximum lets the nearest sharp edge vouch for it.
+
+    Returns 0..1, high where the image is sharp. Must be given the *raw*
+    luminance: level it or blur it first and the thing being measured is gone.
+    """
+    from scipy.ndimage import maximum_filter
+    detail = np.abs(gray - blur(gray, fine))
+    f = blur(maximum_filter(detail, size=spread), soften)
+    return np.clip(f / max(float(np.percentile(f, pct)), 1e-9), 0.0, 1.0)

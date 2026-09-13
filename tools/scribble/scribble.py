@@ -30,7 +30,7 @@ import numpy as np
 from common import (auto_levels, levels, load_gray, render, render_layers,
                     to_svg, to_svg_layers, tone_report)
 from contour import contour_scribble
-from field import blur as blur_field
+from field import blur as blur_field, focus_map
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
 from stitch import tidy, travel
@@ -38,6 +38,17 @@ from separate import (auto_pens, load_rgb, parse_pens, separate, to_hex,
                       white_balance)
 from synth import chart
 from tsp import tsp_art, break_long
+
+
+def focus_mask(gray, weight):
+    """Ink multiplier from the source's depth of field, 1.0 when disabled.
+
+    At weight w the out-of-focus parts keep (1 - w) of their ink and the sharp
+    parts keep all of it, so w is "how much of the background to throw away".
+    """
+    if weight <= 0:
+        return 1.0
+    return (1.0 - weight) + weight * focus_map(gray)
 
 
 def build(d, args, gray=None, quiet=False):
@@ -71,6 +82,8 @@ def run_colour(args):
     if args.chart or not args.image:
         raise SystemExit("--pens needs a source image")
     rgb = load_rgb(args.image, args.width)
+    lum_src = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    mask = focus_mask(lum_src, args.focus)
     rgb = white_balance(rgb, gain=args.paper)
     if args.blur > 0:
         rgb = np.stack([np.clip(blur_field(rgb[..., c], args.blur), 0, 1)
@@ -85,14 +98,13 @@ def run_colour(args):
     # Light pens first, so where two colours meet it is the darker nib that
     # crosses the lighter ink - the direction you cannot see. Same convention
     # as the renderer's colour layers.
-    lum_src = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
     lum = [0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] for p in pens]
     idx = sorted(range(len(pens)), key=lambda i: -lum[i])
 
     h, w = covers[0].shape
     layers = []
     for rank, i in enumerate(idx):
-        d = np.clip(covers[i] ** args.gamma, 0.0, 1.0)
+        d = np.clip(covers[i] ** args.gamma * mask, 0.0, 1.0)
         if args.seed is not None:
             args.seed += rank          # so layers do not draw identical paths
         pl = build(d, args, gray=lum_src, quiet=rank > 0)
@@ -139,6 +151,10 @@ def main(argv=None):
     ap.add_argument("--paper", type=float, default=1.0, metavar="G",
                     help="with --pens: paper gain. Below 1 treats more of the "
                          "image as bare paper and spends less ink")
+    ap.add_argument("--focus", type=float, default=0.0, metavar="W",
+                    help="hold back ink where the photo is out of focus, 0-1. "
+                         "Uses the source's own depth of field to separate "
+                         "subject from background")
     ap.add_argument("--warm", type=float, default=0.0, metavar="W",
                     help="darken warm colours by W x (red - blue). A colour "
                          "filter, for subjects that share a luminance with "
@@ -173,6 +189,8 @@ def main(argv=None):
         return run_colour(args)
 
     gray = chart() if args.chart else load_gray(args.image, args.width, args.warm)
+    # Measured before levels and blur, which would destroy what it measures.
+    mask = focus_mask(gray, args.focus)
     black, white = args.black, args.white
     if args.auto_levels:
         a, b = auto_levels(gray)
@@ -185,7 +203,7 @@ def main(argv=None):
         gray = levels(gray, black, white)
     if args.blur > 0:
         gray = np.clip(blur_field(gray, args.blur), 0.0, 1.0)
-    d = np.clip((1.0 - gray) ** args.gamma, 0.0, 1.0)
+    d = np.clip((1.0 - gray) ** args.gamma * mask, 0.0, 1.0)
     h, w = d.shape
 
     pl = build(d, args, gray=gray)

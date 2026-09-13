@@ -44,6 +44,25 @@ texture is near that size the two beat against each other and the output
 clumps into rosettes. Softening the source first removes the beat. The greedy
 walk is immune, having no cell size to beat against.
 
+## Depth of field
+
+`--focus` uses the photograph's own focus to separate subject from background,
+holding ink back where the source is blurred. It is a compositional control
+rather than a fidelity one - a hand would suppress a busy background, and no
+purely local tone rule does that on its own.
+
+Sharpness is measured as the energy left after subtracting a small blur, then
+spread with a local *maximum* rather than an average. That distinction matters:
+a smooth patch inside a sharp subject - the flank of a cat, a plain wall -
+carries no fine detail of its own, so averaging marks it out of focus and
+knocks the middle out of your subject. A maximum lets the nearest sharp edge
+vouch for it. Measure it on the raw luminance, before levels or blur, or the
+thing being measured is already gone.
+
+`--focus 0.85` thinned the far hedge on the test photo to an airy suggestion
+while the cat and the near flowers kept their weight, and took ~8% off the pen
+lifts as a side effect.
+
 ## The four algorithms
 
 **`cycloid.py` — tone-modulated loops.** One pen path snakes across the image
