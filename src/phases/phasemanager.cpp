@@ -1,4 +1,5 @@
 #include "phasemanager.h"
+#include <esp_system.h>
 #include "retractbeltsphase.h"
 #include "settopdistancephase.h"
 #include "extendtohomephase.h"
@@ -79,6 +80,29 @@ const char* PhaseManager::getUploadError() {
     return svgSelectPhase->getUploadError();
 }
 
+
+// Why the chip last restarted. Nothing recorded this, so a device found wedged -
+// silent on serial, unresponsive on HTTP, not in the captive portal - told us
+// nothing after a reset put it right. A panic, a watchdog and a brownout all look
+// identical from the network, and they have completely different causes: a
+// brownout points at the shared 5V rail under motor and servo load, a task
+// watchdog at something blocking loop().
+static const char* resetReasonName() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:  return "poweron";
+        case ESP_RST_EXT:      return "external";
+        case ESP_RST_SW:       return "software";
+        case ESP_RST_PANIC:    return "panic";
+        case ESP_RST_INT_WDT:  return "interruptWatchdog";
+        case ESP_RST_TASK_WDT: return "taskWatchdog";
+        case ESP_RST_WDT:      return "otherWatchdog";
+        case ESP_RST_DEEPSLEEP: return "deepSleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO:     return "sdio";
+        default:               return "unknown";
+    }
+}
+
 void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     auto currentPhase = getCurrentPhase()->getName();
     auto moving = movement->isMoving();
@@ -145,6 +169,9 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     root["txPowerDbm"] = netWatch->getTxPowerDbm();
     root["bssid"] = netWatch->getBssid();
     root["channel"] = netWatch->getChannel();
+    // Survives the restart it describes, so a hang can be diagnosed after the
+    // fact instead of only while it is happening.
+    root["resetReason"] = resetReasonName();
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;

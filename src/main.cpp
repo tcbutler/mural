@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include <WiFiManager.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -263,6 +264,10 @@ void setup()
 {
     delay(10);
     Serial.begin(9600);
+    // First thing in the log: why the last run ended. A wedged device that had to
+    // be reset otherwise leaves no trace of whether it panicked, tripped a
+    // watchdog, or browned out.
+    Serial.printf("Boot. Last reset reason: %d\n", (int)esp_reset_reason());
 
     // Brought up first, ahead of everything that can fail or block, so the
     // machine can report a failed LittleFS mount or a long WiFi connect

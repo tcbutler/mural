@@ -114,6 +114,10 @@ const state = {
     txPowerDbm: FAULTS.has('weak-wifi') ? 2 : 19.5,
     bssid: '00:11:22:33:44:55',
     channel: 6,
+    // esp_reset_reason() from the previous run. 'poweron' is the benign case;
+    // 'panic', 'brownout' and the watchdogs are what a wedged device leaves
+    // behind once it has been reset.
+    resetReason: 'poweron',
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
     // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept
