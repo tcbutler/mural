@@ -310,4 +310,56 @@ if (!paperAvailable) {
             assert.ok(distFromBackdrop > tolerance, `palette entry rgb(${r},${g},${b}) is suspiciously close to the backdrop - background leaked into the palette`);
         }
     });
+
+    // The confident radius is a fraction of the CLOSEST pair of reference
+    // colours, which makes the whole image's confidence hostage to the two most
+    // similar references. A near-white palette entry sitting close to the white
+    // background reference collapses it towards zero, and then nothing anywhere
+    // is confident: every pixel becomes fringe, to be grown from confident
+    // neighbours that do not exist.
+    //
+    // Observed on the MURAL2.0 image as a saturated yellow circle classifying
+    // away to nothing while its cluster still held 168,693 samples. That case is
+    // no longer reachable (the seeding fix stopped producing the offending
+    // entry), so this pins the mechanism directly rather than through an image.
+    test("classifyWithFringeResolution: one near-white palette entry does not collapse confidence everywhere", () => {
+        paper.setup(new paper.Size(60, 60));
+
+        const { classifyWithFringeResolution } =
+            require("../src/vectorizer") as typeof import("../src/vectorizer");
+
+        // #fdfdfd sits a hair from the white background reference, squeezing the
+        // minimum pairwise distance - and with it the confident radius - to
+        // almost nothing.
+        const palette = [
+            new paper.Color("#fdfdfd"),
+            new paper.Color("#f6c43e"),
+        ];
+
+        // A block of the second colour with a few units of variation, as any real
+        // image has: exact matches sit at distance 0 and are confident under any
+        // threshold, so a perfectly uniform block cannot show this at all - the
+        // first version of this test passed with the floor removed.
+        const image = makeImageData(60, 60, (x, y) => {
+            const wobble = ((x + y) % 5) - 2;
+            return [246 + wobble, 196 + wobble, 62 + wobble, 255];
+        });
+        const result = classifyWithFringeResolution(image, palette);
+
+        // fringeFraction is the share of opaque pixels that were not confidently
+        // close to ANY reference on the first pass. Pixels sitting exactly on a
+        // palette colour should be confident; when the radius collapses, this
+        // goes to 1 and the whole image is left to a growth pass with nothing to
+        // grow from.
+        assert.ok(
+            result.fringeFraction < 0.1,
+            `a block of pixels sitting on their own palette colour should be confident, but ${(100 * result.fringeFraction).toFixed(0)}% came out as fringe`,
+        );
+
+        const labelled = Array.from(result.indices).filter(index => index === 1).length;
+        assert.ok(
+            labelled > 0.9 * 60 * 60,
+            `expected the block to be labelled as its own colour, got ${labelled} of ${60 * 60}`,
+        );
+    });
 }
