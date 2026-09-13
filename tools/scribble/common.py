@@ -79,6 +79,53 @@ def to_svg(polylines, size, pen_mm=1.0, px_per_mm=None, path=None):
     return svg
 
 
+def render_layers(layers, size, pen_px=1.4, ss=3):
+    """Rasterise coloured layers onto white, subtractively.
+
+    Each layer is (rgb, polylines). Strokes multiply what is already on the
+    page rather than painting over it, because that is what a second pen
+    actually does to paper.
+    """
+    w, h = size
+    canvas = np.ones((h, w, 3), dtype=np.float64)
+    for rgb, polylines in layers:
+        img = Image.new("L", (w * ss, h * ss), 255)
+        d = ImageDraw.Draw(img)
+        lw = max(1, int(round(pen_px * ss)))
+        for pl in polylines:
+            if len(pl) < 2:
+                continue
+            d.line([(float(x) * ss, float(y) * ss) for x, y in pl], fill=0,
+                   width=lw, joint="curve")
+        cov = 1.0 - np.asarray(img.resize((w, h), Image.LANCZOS),
+                               dtype=np.float64) / 255.0
+        ink = np.array(rgb, dtype=np.float64)[None, None, :]
+        canvas *= (1.0 - cov[..., None]) + cov[..., None] * ink
+    return Image.fromarray((np.clip(canvas, 0, 1) * 255).astype(np.uint8))
+
+
+def to_svg_layers(layers, size, pen_mm=1.0, path=None):
+    """One SVG, one group per pen, in drawing order."""
+    w, h = size
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">',
+             f'<rect width="{w}" height="{h}" fill="#fff"/>']
+    for rgb, polylines in layers:
+        col = "#" + "".join(f"{int(round(c * 255)):02x}" for c in rgb)
+        parts.append(f'<g fill="none" stroke="{col}" stroke-width="{pen_mm}" '
+                     f'stroke-linecap="round" stroke-linejoin="round">')
+        for pl in polylines:
+            if len(pl) < 2:
+                continue
+            pts = " ".join(f"{x:.2f},{y:.2f}" for x, y in pl)
+            parts.append(f'<polyline points="{pts}"/>')
+        parts.append("</g>")
+    parts.append("</svg>")
+    svg = "\n".join(parts)
+    if path:
+        open(path, "w").write(svg)
+    return svg
+
+
 def tone_report(rendered_img, target_d, blur_px):
     """How close did the ink density get to the requested tone, per tone bucket?"""
     got = 1.0 - np.asarray(rendered_img.filter(ImageFilter.GaussianBlur(blur_px)), dtype=np.float64) / 255.0

@@ -94,6 +94,39 @@ points. Optimal it is not, and for art it does not need to be.
 
 The first three are non-deterministic; `--seed` makes a run repeatable.
 
+## Colour
+
+`--pens` gives each pen its own pass, composed into one SVG with a group per
+colour. Tinting a greyscale scribble does not make a two-colour drawing, so the
+work is in the separation: `separate.py` converts to density (`-log` of
+reflectance, where a pen's effect becomes additive) and solves a non-negative
+least squares per colour for how much of each pen a pixel wants. Non-negative
+matters - an unconstrained fit cheerfully asks for a negative amount of green
+to make something oranger. Colours are quantised first, so the solve runs a few
+thousand times rather than half a million, and it costs about a tenth of a
+second.
+
+```
+python3 scribble.py photo.jpg --pens 2 --algo greedy --join 8
+python3 scribble.py photo.jpg --pens '#b4541a,#2f5d2a' --algo greedy --join 8
+```
+
+Two things were needed to make auto-picked pens usable, and both are worth
+knowing if you pick your own:
+
+- **Cluster hue, not colour.** K-means on raw RGB separates by brightness, so a
+  ginger cat and a green hedge - which differ in hue and hardly at all in tone
+  - both came back the same olive. Clustering chromaticity fixes it.
+- **Pens are darker than the image.** The first version drove each cluster to
+  full saturation and got bright pastel pens, which need impossible coverage to
+  reach a mid-tone, so one pen ended up carrying the whole drawing. Scaling
+  each pen down to a pen-like luminance fixed it.
+
+Layers draw light pen first, so where two colours meet it is the darker nib
+crossing the lighter ink - the direction you cannot see. Same convention as the
+renderer's colour layers. `--paper` sets how much of the image counts as bare
+paper, which is the colour version of the white-point problem above.
+
 ## Measuring tone, not eyeballing it
 
 `common.tone_report` blurs the rendered strokes at the scale of the line

@@ -27,15 +27,88 @@ import argparse
 import sys
 import numpy as np
 
-from common import (auto_levels, levels, load_gray, render, to_svg,
-                    tone_report)
+from common import (auto_levels, levels, load_gray, render, render_layers,
+                    to_svg, to_svg_layers, tone_report)
 from contour import contour_scribble
 from field import blur as blur_field
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
 from stitch import tidy, travel
+from separate import (auto_pens, load_rgb, parse_pens, separate, to_hex,
+                      white_balance)
 from synth import chart
 from tsp import tsp_art, break_long
+
+
+def build(d, args, gray=None, quiet=False):
+    """Run the selected algorithm over one ink-demand map.
+
+    `gray` is the source luminance, used only for the orientation field. In
+    colour mode it is the whole image's luminance rather than the pen's own
+    coverage, because the form of the subject does not change per pen.
+    """
+    if gray is None:
+        gray = 1.0 - d
+    if args.algo == "cycloid":
+        return cycloid_scribble(d, row_step=args.row, pen=args.pen,
+                                seed=args.seed, lift=not args.no_lift)
+    if args.algo == "contour":
+        k = args.field_smooth
+        return contour_scribble(d, gray=gray, d_sep=args.row, pen=args.pen,
+                                seed=args.seed, lift=not args.no_lift,
+                                sigma_grad=1.6 * k, sigma_tensor=6.0 * k)
+    if args.algo == "tsp":
+        closed, pts = tsp_art(d, n_points=args.points, seed=args.seed)
+        if not quiet:
+            print(f"  {len(pts)} stipple points")
+        return break_long(closed[0], args.break_edges)
+    return greedy_scribble(d, n_strokes=args.strokes, pen=args.pen,
+                           seed=args.seed)
+
+
+def run_colour(args):
+    """One scribble pass per pen, composed into a single layered SVG."""
+    if args.chart or not args.image:
+        raise SystemExit("--pens needs a source image")
+    rgb = load_rgb(args.image, args.width)
+    rgb = white_balance(rgb, gain=args.paper)
+    if args.blur > 0:
+        rgb = np.stack([np.clip(blur_field(rgb[..., c], args.blur), 0, 1)
+                        for c in range(3)], axis=-1)
+
+    try:
+        pens = auto_pens(rgb, int(args.pens), seed=args.seed)
+    except ValueError:
+        pens = parse_pens(args.pens)
+    covers = separate(rgb, pens)
+
+    # Light pens first, so where two colours meet it is the darker nib that
+    # crosses the lighter ink - the direction you cannot see. Same convention
+    # as the renderer's colour layers.
+    lum_src = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    lum = [0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] for p in pens]
+    idx = sorted(range(len(pens)), key=lambda i: -lum[i])
+
+    h, w = covers[0].shape
+    layers = []
+    for rank, i in enumerate(idx):
+        d = np.clip(covers[i] ** args.gamma, 0.0, 1.0)
+        if args.seed is not None:
+            args.seed += rank          # so layers do not draw identical paths
+        pl = build(d, args, gray=lum_src, quiet=rank > 0)
+        if not args.no_order:
+            pl = tidy(pl, max_gap=args.join)
+        drawn, up = travel(pl)
+        print(f"  {to_hex(pens[i])}: {len(pl)} strokes, {max(0, len(pl)-1)} lifts, "
+              f"{drawn/1000:.1f}k px drawn, mean demand {d.mean():.3f}")
+        layers.append((pens[i], pl))
+
+    to_svg_layers(layers, (w, h), pen_mm=args.pen, path=args.out)
+    if args.preview:
+        render_layers(layers, (w, h), pen_px=args.pen).save(args.preview)
+    total = sum(max(0, len(pl) - 1) for _, pl in layers) + len(layers) - 1
+    print(f"{args.out}: {len(layers)} pens, {total} pen lifts including swaps")
+    return 0
 
 
 def main(argv=None):
@@ -59,6 +132,13 @@ def main(argv=None):
                          "photos, whose paper is never actually white")
     ap.add_argument("--black", type=float, default=None, metavar="L",
                     help="luminance (0-1) treated as solid ink")
+    ap.add_argument("--pens", metavar="N|HEX,HEX",
+                    help="draw in colour: either a pen count to pick "
+                         "automatically, or explicit colours like "
+                         "'#b4541a,#2f5d2a'. Each pen gets its own pass")
+    ap.add_argument("--paper", type=float, default=1.0, metavar="G",
+                    help="with --pens: paper gain. Below 1 treats more of the "
+                         "image as bare paper and spends less ink")
     ap.add_argument("--warm", type=float, default=0.0, metavar="W",
                     help="darken warm colours by W x (red - blue). A colour "
                          "filter, for subjects that share a luminance with "
@@ -89,6 +169,9 @@ def main(argv=None):
     if not args.chart and not args.image:
         ap.error("give an image path or --chart")
 
+    if args.pens:
+        return run_colour(args)
+
     gray = chart() if args.chart else load_gray(args.image, args.width, args.warm)
     black, white = args.black, args.white
     if args.auto_levels:
@@ -105,24 +188,8 @@ def main(argv=None):
     d = np.clip((1.0 - gray) ** args.gamma, 0.0, 1.0)
     h, w = d.shape
 
-    if args.algo == "cycloid":
-        pl = cycloid_scribble(d, row_step=args.row, pen=args.pen, seed=args.seed,
-                              lift=not args.no_lift)
-        blur = args.row
-    elif args.algo == "contour":
-        k = args.field_smooth
-        pl = contour_scribble(d, gray=gray, d_sep=args.row, pen=args.pen,
-                              seed=args.seed, lift=not args.no_lift,
-                              sigma_grad=1.6 * k, sigma_tensor=6.0 * k)
-        blur = args.row
-    elif args.algo == "tsp":
-        closed, pts = tsp_art(d, n_points=args.points, seed=args.seed)
-        pl = break_long(closed[0], args.break_edges)
-        print(f"  {len(pts)} stipple points")
-        blur = 9.0
-    else:
-        pl = greedy_scribble(d, n_strokes=args.strokes, pen=args.pen, seed=args.seed)
-        blur = 9.0
+    pl = build(d, args, gray=gray)
+    blur = args.row if args.algo in ("cycloid", "contour") else 9.0
 
     raw_lifts = max(0, len(pl) - 1)
     if not args.no_order:
