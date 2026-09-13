@@ -155,6 +155,14 @@ def preprocess(rgb, feats=None, ink_ceiling=INK_CEILING):
 # 2.5x less of it for the same coverage. The ranking flips between a cost
 # weight of 0.2 and 0.3.
 #
+# Blind human rankings then settled the loop families' fate. Across 5 sheets
+# and 80 pairwise preferences, the greedy walk and the TSP tour took every
+# single one of the top-two slots - 5 each, and not one cycloid or contour
+# render among them. Re-scoring the whole sweep under the fitted weights drops
+# the loop fills out entirely: 25 images split 13 TSP, 12 greedy. They stay
+# reachable under --prefer texture because their look is the point, but they
+# are no longer recommended for a picture.
+#
 # So the recommendation is one question, not a classifier.
 
 def suggest(feats, prefer="picture"):
@@ -189,13 +197,15 @@ def suggest(feats, prefer="picture"):
         return {"algo": "tsp", "points": 20000, "break_edges": 30.0}, (
             "a non-crossing tour needs about 2.5x less line for the same "
             "coverage, so it plots in roughly a third of the time; it wins on "
-            "cost on 22 of 23 test images, at some loss of legibility")
+            "cost on 19 of 23 test images, and a human ranked it first on two "
+            "sheets out of five even without being told the cost")
 
     if prefer == "texture":
-        # A style choice, not a fitted one - neither loop family beat the
-        # greedy walk on the corpus by a margin worth trusting. Which of the
-        # two is a genuine feature call, though: the contour version only has
-        # something to follow if the image has coherent structure.
+        # An explicit style choice, and now known to be one: in blind ranking
+        # neither loop family reached a human's top two on any sheet. Ask for
+        # them because you want the look, not because they score well. Which
+        # of the two is still a genuine feature call: the contour version only
+        # has something to follow if the image has coherent structure.
         if feats["coherence"] > 0.60 and feats["texture_energy"] < 0.55:
             return {"algo": "contour", "row": 9.0, "field_smooth": 1.0}, (
                 f"structure coherence is {feats['coherence']:.2f}, so there is "
@@ -206,9 +216,9 @@ def suggest(feats, prefer="picture"):
             f"would be following noise; rows are the safer loop")
 
     return {"algo": "greedy", "join": 8.0}, (
-        "best legibility on 21 of 23 test images, and the tone error is the "
-        "lowest of any config since the ink accounting was fixed; the cost is "
-        "plot time, about 3x the TSP tour")
+        "best legibility on 19 of 23 test images, and it took a top-two slot on "
+        "every blind sheet a human ranked; the cost is plot time, about 3x the "
+        "TSP tour")
 
 
 def colour_advice(feats, max_pens=3):

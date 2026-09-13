@@ -66,8 +66,22 @@ def plot_minutes(drawn_px, lifts, width_px):
     return seconds / 60.0
 
 
+# Fitted against one human's blind rankings of 5 sheets - 80 pairwise
+# preferences - not chosen. The starting guess of (0.45, 0.35, 0.20)
+# reproduced 71% of them; this reproduces 95%.
+#
+# The tone weight is zero, and that is the finding. Ranked on tone alone the
+# pairs came out at 50% - a coin flip. It does not mean tone is irrelevant to
+# a drawing: a render with badly wrong greys would be illegible, and the
+# legibility term already measures tonal agreement at a coarse scale. It means
+# the *residual* tone-accuracy term adds nothing once legibility is accounted
+# for, and actively misleads - it was what lifted the even-textured loop fills,
+# which score well on greys and read as grey mush.
+HUMAN_FITTED_WEIGHTS = (0.85, 0.00, 0.15)
+
+
 def evaluate(rendered, target_d, blur_px, drawn_px, lifts, width_px,
-             weights=(0.45, 0.35, 0.20)):
+             weights=HUMAN_FITTED_WEIGHTS):
     """Component scores plus a weighted composite, all 0..1 except rms/minutes."""
     rms = tone_rms(rendered, target_d, blur_px)
     leg = legibility(rendered, target_d)
