@@ -65,6 +65,16 @@ coverage. The ranking flips between a cost weight of 0.2 and 0.3, which is why
 The preprocessing is where the real decisions are, and each one below exists
 because something here failed without it.
 
+## Corpus hygiene
+
+Two images here are photographs of an existing pen drawing, and they are the
+two highest `texture_energy` scores in the corpus - the measure that detects a
+source whose tone is already made of marks. They earn their place as a test of
+the `--blur` rule, which generalises to halftones and engravings. They do not
+earn a place in judging which fill looks best: redrawing a scribble as a
+scribble is a copy of a copy, and no algorithm choice recovers what the
+reproduction already lost. `--auto` now says so when it detects one.
+
 ## Levels, before anything else
 
 A photograph of a real page has no true white in it. The paper meters as a mid

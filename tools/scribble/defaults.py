@@ -83,8 +83,14 @@ def preprocess(rgb, feats=None, ink_ceiling=INK_CEILING):
     src_blur = 0.0
     if feats["texture_energy"] > 0.62:
         src_blur = 3.0
+        # Softening makes the render work, but say the quiet part: a source
+        # whose tone is already dithered is a reproduction of someone else's
+        # mark-making, and redrawing it is a copy of a copy. The blur recovers
+        # a usable image, not a good original.
         why["blur"] = (src_blur, f"fine-scale energy is {feats['texture_energy']:.2f} of "
-                                 f"coarse, so the source carries its own dither")
+                                 f"coarse, so the source's tone is already made of "
+                                 f"marks - softening it first. Expect second-generation "
+                                 f"results; an original photograph will beat this")
         luma = np.clip(blur(luma, src_blur), 0.0, 1.0)
     else:
         why["blur"] = (0.0, "source is continuous tone, nothing to soften")
