@@ -3,8 +3,45 @@ import * as client from './client.js';
 import { showError } from './alerts.js';
 import { crc32OfString } from './crc32.js';
 import { estimatePenUsage, loadPenCapacities, resetPenCapacities, savePenCapacities, loadDefaultPenType, saveDefaultPenType } from './inkCapacity.js';
+import { initPreviewZoom } from './previewZoom.js';
+import { isRasterFile, rasterFileToSvgString } from './rasterImport.js';
 
 let currentState = null;
+
+// Calibrated pen-holder geometry, mirrored from the state document. Every pen
+// slider is inverted so dragging right lowers the pen, and spans the locked
+// range rather than a hardcoded 0-90 - that hardcoded ceiling is what stopped a
+// release position above 90 from ever being reachable. The defaults reproduce
+// the previous behaviour on a machine that has not been calibrated yet.
+let penLimits = { lowestLocked: 0, highestLocked: 90, unlocked: 90 };
+
+function invertWithinLockedRange(sliderValue) {
+    const { lowestLocked: lo, highestLocked: hi } = penLimits;
+    const value = hi + lo - sliderValue;
+    if (value < lo) {
+        return lo;
+    }
+    if (value > hi) {
+        return hi;
+    }
+    return value;
+}
+
+// Points every pen slider at the calibrated locked range. Called whenever a
+// state document arrives, since the limits can change from the tools panel
+// while the wizard is open.
+function applyPenLimitsToSliders(state) {
+    if (!state || typeof state.penHighestLocked !== 'number') {
+        return;
+    }
+    penLimits = {
+        lowestLocked: state.penLowestLocked,
+        highestLocked: state.penHighestLocked,
+        unlocked: state.penUnlocked,
+    };
+    $("#servoRange, #penSwapServoRange, #resumePenRange")
+        .attr({ min: penLimits.lowestLocked, max: penLimits.highestLocked });
+}
 
 let currentWorker = null;
 
@@ -179,6 +216,68 @@ function updatePreviewStatusUI() {
     $("#acceptBlockedNote").toggle(previewDirty && hasRenderedOnce);
 }
 
+// --- "You are here" ---------------------------------------------------------
+//
+// Plotting an image is a sequence, but each screen arrived with no indication of
+// where it sat in that sequence - the retract-belts screen just appeared, with
+// nothing to say it was the third of six things.
+//
+// One table drives it. The client-only screens (renderer choice, preview,
+// upload) belong to the step that produced them rather than being steps of their
+// own: from the user's point of view they are all still "choose the image".
+const FLOW_STEPS = [
+    { label: 'Pin distance',  slides: ['distanceBetweenAnchorsSlide'] },
+    { label: 'Choose image',  slides: ['svgUploadSlide', 'chooseRendererSlide', 'drawingPreviewSlide', 'uploadProgress'] },
+    { label: 'Retract belts', slides: ['retractBeltsSlide'] },
+    { label: 'Extend belts',  slides: ['extendToHomeSlide'] },
+    { label: 'Calibrate pen', slides: ['penCalibrationSlide'] },
+    { label: 'Draw',          slides: ['beginDrawingSlide', 'drawingLiveSlide'] },
+];
+
+// loadingSlide is transient, and resumeDrawingSlide is a side entry offered
+// before the sequence starts - neither has a position to report, so both simply
+// show nothing rather than a misleading number.
+function flowStepFor(slideId) {
+    const index = FLOW_STEPS.findIndex(step => step.slides.includes(slideId));
+    return index === -1 ? null : { number: index + 1, total: FLOW_STEPS.length, label: FLOW_STEPS[index].label };
+}
+
+function updateFlowPosition() {
+    const visible = [...document.querySelectorAll('.muralSlide')].filter(s => s.offsetParent !== null);
+    for (const slide of visible) {
+        const topbar = slide.querySelector('.ui-topbar');
+        if (!topbar) {
+            continue;
+        }
+        const step = flowStepFor(slide.id);
+        let marker = topbar.querySelector('.step-count');
+        if (!step) {
+            if (marker) marker.remove();
+            continue;
+        }
+        if (!marker) {
+            // .ui-topbar is already a space-between flex row with the eyebrow on
+            // the left, so the marker just goes on the right.
+            marker = document.createElement('span');
+            marker.className = 'step-count';
+            topbar.appendChild(marker);
+        }
+        marker.textContent = `Step ${step.number} of ${step.total} \u00B7 ${step.label}`;
+    }
+}
+
+// Slides are shown from a dozen places - adaptToState's switch, the renderer
+// choice, the preview, the upload progress. Watching for the change is one
+// mechanism that cannot be forgotten at a new call site, rather than a rule to
+// remember to call this each time.
+function watchFlowPosition() {
+    const observer = new MutationObserver(() => updateFlowPosition());
+    document.querySelectorAll('.muralSlide').forEach(slide => {
+        observer.observe(slide, { attributes: true, attributeFilter: ['style', 'class'] });
+    });
+    updateFlowPosition();
+}
+
 function markDirty() {
     settingsGeneration++;
     previewDirty = true;
@@ -320,6 +419,13 @@ function updatePlotDimensionsDisplay() {
 
 window.onload = function () {
     init();
+    watchFlowPosition();
+    initPreviewZoom({
+        toggleId: 'previewZoomToggle',
+        imageId: 'previewSvg',
+        frameId: 'previewFrame',
+        scaleReadoutId: 'previewZoomScale',
+    });
 };
 
 let uploadConvertedCommands = null;
@@ -375,6 +481,7 @@ async function pollRetractStatus() {
             }
             setRetractStatusUI('left', state.leftRetract || 'idle');
             setRetractStatusUI('right', state.rightRetract || 'idle');
+            renderMotorsFree(state);
         } catch (err) {
             // Transient failure - keep polling. The manual "Belts are
             // retracted" fallback button doesn't depend on this loop.
@@ -386,10 +493,24 @@ async function pollRetractStatus() {
     }
 }
 
+// Puts the extend screen back in a state the user can act on. Any exit from
+// the wait below has to go through here, or the screen is left with its only
+// button disabled behind a spinner and no way forward.
+function stopExtendingUI() {
+    $("#extendingSpinner").css('visibility', 'hidden');
+    $("#extendToHome").prop("disabled", false);
+}
+
 async function checkIfExtendedToHome(extendToHomeTime) {
     await new Promise(r => setTimeout(r, (extendToHomeTime || 0) * 1000));
 
     const waitPeriod = 2000;
+    // The firmware reports how long the move will take, so a phase that has not
+    // changed well past that is not a slow move - it is a move that never
+    // started, or a device that went away mid-travel. Waiting for ever on that
+    // is the dead end this screen was stuck in; give it a generous margin and
+    // then hand control back.
+    const deadline = Date.now() + Math.max(60000, (extendToHomeTime || 0) * 2000);
     let done = false;
     while (!done) {
         try {
@@ -397,10 +518,18 @@ async function checkIfExtendedToHome(extendToHomeTime) {
             if (state.phase !== 'ExtendToHome') {
                 adaptToState(state);
                 done = true;
+            } else if (Date.now() > deadline) {
+                stopExtendingUI();
+                showError(
+                    "Mural did not report finishing the move. Check whether the belts extended, then try again.",
+                    () => $("#extendToHome").click()
+                );
+                done = true;
             } else {
                 await new Promise(r => setTimeout(r, waitPeriod));
             }
         } catch (err) {
+            stopExtendingUI();
             showError("Failed to get current phase: " + err, () => checkIfExtendedToHome(0));
             done = true;
         }
@@ -475,25 +604,27 @@ function init() {
         $(this).prop( "disabled", true);
         $("#extendingSpinner").css('visibility', 'visible');
         $.post("/extendToHome", {})
-        .always(async function(res) {
-            const extendToHomeTime = parseInt(res);
-            await checkIfExtendedToHome(extendToHomeTime);
+        .done(async function(res) {
+            // The firmware answers with the estimated move time in seconds as
+            // plain text (ExtendToHomePhase::extendToHome).
+            const extendToHomeTime = parseInt(res, 10);
+            await checkIfExtendedToHome(Number.isFinite(extendToHomeTime) ? extendToHomeTime : 0);
+        })
+        .fail(function(jqXHR) {
+            // This used to be one .always() handler shared with success, where
+            // the failed request object parses as NaN, the wait below collapses
+            // to zero, and the poll then waits for a phase change that is never
+            // coming - the disabled button and spinner with no message that this
+            // screen got stuck showing. A refused or dropped request has to say
+            // so and give the button back.
+            stopExtendingUI();
+            const detail = (jqXHR && (jqXHR.responseText || jqXHR.statusText)) || 'no response';
+            showError("Could not start extending the belts: " + detail, () => $("#extendToHome").click());
         });
     });
     
     function getServoValueFromInputValue() {
-        const inputValue = parseInt($("#servoRange").val());
-        const value = 90 - inputValue;
-        let normalizedValue;
-        if (value < 0) {
-            normalizedValue = 0;
-        } else if (value > 90) {
-            normalizedValue = 90;
-        } else {
-            normalizedValue = value;
-        }
-
-        return normalizedValue;
+        return invertWithinLockedRange(parseInt($("#servoRange").val()));
     }
 
     $("#servoRange").on('input', $.throttle(250, function (e) {
@@ -521,18 +652,33 @@ function init() {
         });
     });
 
-    async function getUploadedSvgString() {
+    // Whether there is an artwork loaded at all. The render paths only need to
+    // know that much, and asking the file input is free - re-reading and
+    // re-decoding the source on every preview is not.
+    function hasUploadedArtwork() {
+        return $("#uploadSvg")[0].files.length > 0;
+    }
+
+    // Whether the loaded artwork came in as pixels. Decides which render route
+    // is even possible - see the #preview handler.
+    let sourceIsRaster = false;
+
+    // A photo is wrapped as an SVG holding the bitmap (rasterImport.js); an SVG
+    // is its own text. Either way what comes back is an SVG document string,
+    // which is the only thing svgControl understands.
+    async function getUploadedArtworkSvgString() {
         const [file] = $("#uploadSvg")[0].files;
-        if (file) {
-            return await file.text();
-        } else {
+        if (!file) {
             return null;
         }
+        sourceIsRaster = isRasterFile(file);
+        if (sourceIsRaster) {
+            return await rasterFileToSvgString(file);
+        }
+        return await file.text();
     }
 
     $("#uploadSvg").change(async function() {
-        const svgString = await getUploadedSvgString();
-
         // A new (or cleared) image invalidates every previous estimate,
         // smart-default application, and per-layer/hue override - they all
         // refer to a source that's about to change.
@@ -553,8 +699,24 @@ function init() {
         $("#processingEstimateText,#processingWarning,#plottingEstimateSummary").hide().empty();
         $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale").hide();
 
+        // An undecodable photo or a malformed SVG must not leave the input
+        // naming a file that never loaded, or the render paths' presence check
+        // would let a preview start with nothing behind it.
+        let svgString = null;
+        sourceIsRaster = false;
+        try {
+            svgString = await getUploadedArtworkSvgString();
+            if (svgString) {
+                svgControl.setSvgString(svgString, currentState);
+            }
+        } catch (err) {
+            svgString = null;
+            sourceIsRaster = false;
+            $("#uploadSvg").val('');
+            showError(err.message || String(err));
+        }
+
         if (svgString) {
-            svgControl.setSvgString(svgString, currentState);
             updateTargetSizeInputs();
             showTargetSizeWarning(null);
 
@@ -686,9 +848,8 @@ function init() {
         renderTargetGeneration = settingsGeneration;
         showRenderOverlay();
 
-        const svgString = await getUploadedSvgString();
-        if (!svgString) {
-            throw new Error('No SVG string');
+        if (!hasUploadedArtwork()) {
+            throw new Error('No image loaded');
         }
 
         updateRenderStage("Rasterizing");
@@ -749,12 +910,18 @@ function init() {
                     // renderHueGroupingSummary.
                     vectorizeHueGroups = e.data.payload.hueGroups || null;
                     renderHueGroupingSummary(vectorizeHueGroups);
-                    const scale = svgControl.getRenderScale();
+                    // Report the raster's ACTUAL pixel size rather than
+                    // re-deriving it from the target size times a scale
+                    // factor. toCommands.ts scales the traced geometry by
+                    // width/svgWidth, so any drift between the assumed and
+                    // real raster size silently mis-scales the whole plot;
+                    // `raster` is the ImageData that was actually traced, so
+                    // the two cannot disagree.
                     renderSvgInWorker(
                         currentWorker,
                         vectorizedSvg,
-                        svgControl.getTargetWidth() * scale,
-                        svgControl.getTargetHeight() * scale,
+                        raster.width,
+                        raster.height,
                         false,
                     );
                 }
@@ -777,9 +944,8 @@ function init() {
         renderTargetGeneration = settingsGeneration;
         showRenderOverlay();
 
-        const svgString = await getUploadedSvgString();
-        if (!svgString) {
-            throw new Error('No SVG string');
+        if (!hasUploadedArtwork()) {
+            throw new Error('No image loaded');
         }
 
         if (currentPreviewId == thisPreviewId) {
@@ -832,6 +998,12 @@ function init() {
             infillDensity: getInfillDensity(),
             flattenPaths: getFlattenPaths(),
             topDistance: currentState.topDistance,
+            // Where the drawing lands in the drawable area (tsc/src/placement.ts).
+            // The pipeline renders at the origin regardless; this translates the
+            // finished command file, so the preview still shows the artwork
+            // filling its frame rather than shrunk into a corner.
+            placement: getPlacement(),
+            safeWidth: getSafeWidth() || undefined,
             // Multi-color (docs/multi-color.md). Vector/path-tracing mode has
             // no vectorize step to tag colors ahead of time, so it needs
             // colorSeparation to opt in to literal-fill/stroke-color
@@ -973,6 +1145,18 @@ function init() {
 
     $("#preview").click(async function() {
         $("#svgUploadSlide").hide();
+
+        // Path tracing pulls paths out of the SVG with paper.js importSVG. A
+        // photo is wrapped as a single <image> (rasterImport.js) and contains no
+        // paths at all, so that route has nothing to trace - measured, it sits
+        // on "Importing" and never finishes. The raster route is the only
+        // meaningful one for pixels, so take it rather than offering a choice
+        // where one option is a dead end.
+        if (sourceIsRaster) {
+            $("#vectorRasterVector").click();
+            return;
+        }
+
         $("#chooseRendererSlide").show();
     });
 
@@ -1174,6 +1358,257 @@ function init() {
         });
     });
 
+    // --- Pen holder calibration (tools panel) -------------------------------
+    //
+    // Records the three angles that describe the holder: the lowest and highest
+    // at which the pen is retained, and the release angle just above them. The
+    // jog here is deliberately the raw servo angle over the full 0-180 range,
+    // not the wizard's inverted 0-90 slider - that mapping (90 - value, clamped
+    // to 90) is precisely what made a release position above 90 unreachable, so
+    // calibrating through it would be impossible.
+    let penCalLimits = { lowestLocked: null, highestLocked: null, unlocked: null };
+
+    function penCalAngle() {
+        return parseInt($("#penCalRange").val(), 10);
+    }
+
+    function renderPenCalLimits() {
+        const show = v => (typeof v === 'number' ? v : '\u2014');
+        $("#penCalLowestVal").text(show(penCalLimits.lowestLocked));
+        $("#penCalHighestVal").text(show(penCalLimits.highestLocked));
+        $("#penCalUnlockedVal").text(show(penCalLimits.unlocked));
+
+        const { lowestLocked: lo, highestLocked: hi, unlocked: un } = penCalLimits;
+        const complete = lo !== null && hi !== null && un !== null;
+
+        // Ordering errors block saving - they would drive the servo somewhere
+        // the holder cannot take. Being a long way past the holder is only a
+        // warning: it is the user's mechanism, and they can see it.
+        let blocking = null;
+        let caution = null;
+        if (complete) {
+            if (lo >= hi) {
+                blocking = `Lowest locked (${lo}\u00B0) must be below highest locked (${hi}\u00B0).`;
+            } else if (un < hi) {
+                blocking = `Unlocked (${un}\u00B0) must be at or above highest locked (${hi}\u00B0) \u2014 raising the pen is what releases it.`;
+            } else if (un - hi > 20) {
+                caution = `Unlocked is ${un - hi}\u00B0 above highest locked. That is a long way past the holder \u2014 check the mechanism still re-engages when a pen is put back.`;
+            }
+        }
+
+        const message = blocking || caution;
+        $("#penCalWarning")
+            .toggle(!!message)
+            .text(message || '')
+            .toggleClass('alert-danger', !!blocking)
+            .toggleClass('alert-warning', !blocking);
+        $("#penCalSave").prop('disabled', !complete || !!blocking);
+        $("#penCalUnlockNow").prop('disabled', typeof un !== 'number');
+    }
+
+    function jogPenTo(angle) {
+        const clamped = Math.max(0, Math.min(180, angle));
+        $("#penCalRange").val(clamped);
+        $("#penCalAngle").text(clamped);
+        $.post("/penJog", { angle: clamped }).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Pen jog failed", null);
+        });
+    }
+
+    $("#penCalRange").on('input', $.throttle(250, function() {
+        jogPenTo(penCalAngle());
+    }));
+    $("#penCalMinus5").click(() => jogPenTo(penCalAngle() - 5));
+    $("#penCalMinus1").click(() => jogPenTo(penCalAngle() - 1));
+    $("#penCalPlus1").click(() => jogPenTo(penCalAngle() + 1));
+    $("#penCalPlus5").click(() => jogPenTo(penCalAngle() + 5));
+
+    // Pen swap: releasing the pen needs the calibrated unlock angle, so this only
+    // appears once the holder has actually been calibrated (unlocked above the
+    // highest locked angle - equal means "no separate release position known").
+    // Release/hold the belts for manual retraction. The button reflects the
+    // firmware's own motorsFree flag rather than a local toggle, so a reload can
+    // never show "released" for motors that are actually holding, or the reverse.
+    // Every committed setup screen gets the same escape. Deliberately "Start
+    // over" rather than "Back": each phase corresponds to something physical
+    // having happened, so stepping back one screen cannot undo it, whereas
+    // re-walking the wizard is exactly the physical re-setup that would be
+    // needed anyway.
+    $(".start-over-btn").click(function() {
+        if (!window.confirm("Start the setup again from the beginning?")) {
+            return;
+        }
+        $(this).prop('disabled', true);
+        $.post("/startOver", {}, function(state) {
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $(".start-over-btn").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Pause the drawing before starting over"
+                : "Couldn't start over", null);
+        });
+    });
+
+    // Releases the holder so a pen carrier can be fitted before calibrating.
+    // /unlockPen is refused while drawing or moving, which is why the hint only
+    // appears on success.
+    $("#penCalReleaseHolder").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/unlockPen", {}, function() {
+            $("#penCalReleaseHolder").prop('disabled', false);
+            $("#penCalReleaseHint").show();
+        }).fail(function(xhr) {
+            $("#penCalReleaseHolder").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't release the holder", null);
+        });
+    });
+
+    // Abandon a paused plot. Confirmed, because it clears the checkpoint - after
+    // this the job cannot be resumed, which is the point, but is irreversible.
+    $("#cancelDrawingBtn").click(function() {
+        if (!window.confirm("Cancel this drawing? It can't be resumed afterwards.")) {
+            return;
+        }
+        $(this).prop('disabled', true);
+        $.post("/cancelDrawing", {}, function(state) {
+            closeLiveEventSource();
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $("#cancelDrawingBtn").prop('disabled', false);
+            showError(xhr.status === 400
+                ? "Pause the drawing before cancelling it"
+                : "Couldn't cancel the drawing", null);
+        });
+    });
+
+    $("#freeMotorsBtn").click(function() {
+        const releasing = !(currentState && currentState.motorsFree);
+        $(this).prop('disabled', true);
+        $.post("/setMotorsFree", { free: releasing ? 1 : 0 }, function(state) {
+            adaptToState(state);
+        }).fail(function(xhr) {
+            $("#freeMotorsBtn").prop('disabled', false);
+            showError(xhr.status === 409
+                ? "Motors can only be released while retracting the belts"
+                : "Couldn't change motor state", null);
+        });
+    });
+
+    $("#penSwapUnlockBtn").click(function() {
+        $.post("/unlockPen", {}).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't release the pen", null);
+        });
+    });
+
+    $("#penCalRecordLowest").click(function() {
+        penCalLimits.lowestLocked = penCalAngle();
+        renderPenCalLimits();
+    });
+    $("#penCalRecordHighest").click(function() {
+        penCalLimits.highestLocked = penCalAngle();
+        renderPenCalLimits();
+    });
+    $("#penCalRecordUnlocked").click(function() {
+        penCalLimits.unlocked = penCalAngle();
+        renderPenCalLimits();
+    });
+
+    $("#penCalSave").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/setPenLimits", {
+            lowestLocked: penCalLimits.lowestLocked,
+            highestLocked: penCalLimits.highestLocked,
+            unlocked: penCalLimits.unlocked,
+        }, function(limits) {
+            penCalLimits = {
+                lowestLocked: limits.lowestLocked,
+                highestLocked: limits.highestLocked,
+                unlocked: limits.unlocked,
+            };
+            renderPenCalLimits();
+            jogPenTo(limits.highestLocked);
+        }).fail(function(xhr) {
+            renderPenCalLimits();
+            showError("Couldn't save pen limits: " + (xhr.responseText || xhr.status), null);
+        });
+    });
+
+    $("#penCalUnlockNow").click(function() {
+        $.post("/unlockPen", {}, function() {
+            const un = penCalLimits.unlocked;
+            if (typeof un === 'number') {
+                $("#penCalRange").val(un);
+                $("#penCalAngle").text(un);
+            }
+        }).fail(function(xhr) {
+            showError(xhr.status === 409
+                ? "Can't move the pen while Mural is drawing"
+                : "Couldn't unlock the pen", null);
+        });
+    });
+
+    function loadPenCalLimits() {
+        $.get("/getPenLimits", function(limits) {
+            penCalLimits = {
+                lowestLocked: limits.lowestLocked,
+                highestLocked: limits.highestLocked,
+                unlocked: limits.unlocked,
+            };
+            $("#penCalRange").val(limits.highestLocked);
+            $("#penCalAngle").text(limits.highestLocked);
+            renderPenCalLimits();
+        });
+    }
+
+    // Changing where the plot lands changes the command file, so it invalidates
+    // the current render exactly like a size or fill change does.
+    $("#placementSelect").on('change', function() {
+        try { localStorage.setItem('muralPlacement', getPlacement()); } catch (e) { /* private mode */ }
+        markDirty();
+    });
+    try {
+        const saved = localStorage.getItem('muralPlacement');
+        if (saved === 'topLeft' || saved === 'centre') {
+            $("#placementSelect").val(saved);
+        }
+    } catch (e) { /* private mode - stay with the default */ }
+
+    $("#useStoredCommandsButton").click(function() {
+        $(this).prop('disabled', true);
+        $.post("/useStoredCommands", {}, function(state) {
+            adaptToState(state);
+        }).fail(function() {
+            $("#useStoredCommandsButton").prop('disabled', false);
+            showError("Couldn't re-plot the stored image", null);
+        });
+    });
+
+    // --- End-of-plot actions ------------------------------------------------
+    // All three need the device, which has just restarted, so waitForDeviceBack()
+    // keeps the first two disabled until it answers again. Download is left
+    // enabled: it is the one action worth attempting immediately, since the
+    // browser surfaces its own failure clearly if the device is still down.
+    $("#plotAgainBtn").click(function() {
+        // The belts have to be re-homed after the restart, so this returns to the
+        // start of the wizard - the stored file is offered again at the image
+        // step via #useStoredCommandsButton rather than being re-uploaded.
+        location.reload();
+    });
+
+    $("#newImageBtn").click(function() {
+        location.reload();
+    });
+
+    $("#downloadFinishedCommands").click(function() {
+        window.location = "/downloadCommands";
+    });
+
     $("#installTestPatternButton").click(function() {
         $(".muralSlide").hide();
         $("#loadingSlide").show();
@@ -1197,6 +1632,7 @@ function init() {
         // figure still surfaces in the main preview flow via
         // renderPlottingEstimate's ink line and the per-layer breakdown.
         renderInkCapacityTable();
+        loadPenCalLimits();
     });
 
     toolsModal.addEventListener('hidden.bs.modal', function (event) {
@@ -1394,6 +1830,7 @@ function adaptToState(state) {
     stopRetractPolling();
     $(".muralSlide").hide();
     currentState = state;
+    applyPenLimitsToSliders(state);
     switch(state.phase) {
         case "RetractBelts":
             $("#retractBeltsSlide").show();
@@ -1406,6 +1843,7 @@ function adaptToState(state) {
             $("#manualRetractHint").toggle(!!state.autoRetract);
             setRetractStatusUI('left', state.leftRetract || 'idle');
             setRetractStatusUI('right', state.rightRetract || 'idle');
+            renderMotorsFree(state);
             pollRetractStatus();
             break;
         case "SetTopDistance":
@@ -1440,13 +1878,24 @@ function adaptToState(state) {
         case "PenCalibration":
             $.post("/setServo", {angle: 90});
             $("#penCalibrationSlide").show();
+            $("#penCalReleaseHint").hide();
+            // Only offer the release action when a distinct unlock angle has been
+            // calibrated; with the defaults it would be the same as "up" and would
+            // not actually free the carrier.
+            $("#penCalReleaseHolder").toggle(penLimits.unlocked > penLimits.highestLocked);
             // Prefill with the last calibrated pen angle, persisted in NVS.
             if (state.storedPenAngle && state.storedPenAngle !== -1) {
-                $("#servoRange").val(90 - state.storedPenAngle).trigger('input');
+                $("#servoRange")
+                    .val(penLimits.highestLocked + penLimits.lowestLocked - state.storedPenAngle)
+                    .trigger('input');
             }
             break;
         case "SvgSelect":
             $("#svgUploadSlide").show();
+            // Mural keeps the last command file across the restart that follows
+            // every plot, so offer to re-plot it rather than making the user
+            // upload the same image again.
+            $("#useStoredCommandsButton").toggle(!!state.hasCommands);
             break;
         case "BeginDrawing":
             $("#beginDrawingSlide").show();
@@ -1505,6 +1954,9 @@ function startLiveDrawingView() {
     $("#pauseDrawingBtn").show().prop('disabled', false).text('Pause');
     $("#resumeDrawingBtn").hide().prop('disabled', false);
     $("#penSwapPanel").hide();
+    $("#drawingFinishedPanel").hide();
+    $("#stallNotice").hide();
+    $("#cancelDrawingBtn").hide();
     $("#liveConnectionNotice").hide();
     $("#liveProgressBar").css('width', '0%').text('0%');
     $("#liveProgressPct").text('0%');
@@ -1596,27 +2048,103 @@ function updateLiveProgress(data) {
     if (data.state === 'penSwap') {
         $("#pauseDrawingBtn").hide();
         $("#resumeDrawingBtn").hide();
+        $("#stallNotice").hide();
         $("#penSwapPanel").show();
         const penLabel = data.penSwapName ? `${data.penSwapIndex} (${data.penSwapName})` : String(data.penSwapIndex);
         $("#penSwapTitle").text(`Insert pen ${penLabel}`);
+        $("#penSwapUnlockBtn").toggle(penLimits.unlocked > penLimits.highestLocked);
     } else {
         $("#penSwapPanel").hide();
         if (data.state === 'paused' || data.state === 'stalled') {
             $("#pauseDrawingBtn").hide();
-            $("#resumeDrawingBtn").show().prop('disabled', data.state === 'stalled');
+            // Resume IS the recovery from a stall (docs/tmc-uart.md: it clears the
+            // stall, lowers the pen if it was down and retries the interrupted
+            // move). Disabling it while stalled - as this did - left the only
+            // documented way out of a stall unreachable, with no other enabled
+            // control on the screen.
+            $("#resumeDrawingBtn").show().prop('disabled', false);
+            $("#cancelDrawingBtn").show().prop('disabled', false);
+            $("#stallNotice").toggle(data.state === 'stalled');
         } else {
             $("#pauseDrawingBtn").show().prop('disabled', false);
             $("#resumeDrawingBtn").hide();
+            $("#cancelDrawingBtn").hide();
+            $("#stallNotice").hide();
         }
     }
 
     if (data.state === 'finished') {
-        // The firmware restarts shortly after sending this event (see
-        // Runner::getNextTask()) - a full reload naturally picks the app back up
-        // once it's back on the network instead of leaving stale wizard state.
-        closeLiveEventSource();
-        setTimeout(() => location.reload(), 2000);
+        showDrawingFinished(data);
     }
+}
+
+// The plot is over. Mural clears its checkpoint, sends this last event and then
+// calls ESP.restart() (Runner::getNextTask), so the device is unreachable for
+// several seconds - measured at about 7.5s to "Server started", most of it the
+// WiFi connect.
+//
+// This used to be `setTimeout(() => location.reload(), 2000)`, which reloaded
+// into a device that was still booting: the request failed and the user was
+// left on a dead page with a stale "Pause" button and no way forward. Now the
+// finished state is a screen in its own right, and anything needing the device
+// stays disabled until it actually answers.
+function showDrawingFinished(data) {
+    closeLiveEventSource();
+    $("#pauseDrawingBtn").hide();
+    $("#resumeDrawingBtn").hide();
+    $("#penSwapPanel").hide();
+    $("#liveConnectionNotice").hide();
+    $("#stallNotice").hide();
+    $("#cancelDrawingBtn").hide();
+    $("#drawingFinishedPanel").show();
+
+    if (data && typeof data.totalLines === 'number' && data.totalLines > 0) {
+        const plural = data.totalLines === 1 ? 'command' : 'commands';
+        $("#drawingFinishedSummary").text(`Drawing complete \u2014 ${data.totalLines} ${plural} plotted.`);
+    }
+
+    waitForDeviceBack();
+}
+
+// Polls until the firmware answers again, then enables the actions that need it.
+// Uses a plain fixed interval with a cap rather than backoff: the outage is
+// short and predictable, and a slow backoff would leave the buttons dead well
+// after the machine was ready.
+function waitForDeviceBack() {
+    const started = Date.now();
+    const timeoutMs = 90000;
+
+    const poll = async () => {
+        try {
+            const state = await $.get("/getState");
+            $("#finishedReconnectNotice").hide();
+            $("#plotAgainBtn").prop('disabled', false);
+            $("#newImageBtn").prop('disabled', false);
+            deviceStateAfterFinish = state;
+            return;
+        } catch (err) {
+            if (Date.now() - started > timeoutMs) {
+                $("#finishedReconnectNotice")
+                    .removeClass('alert-warning').addClass('alert-danger')
+                    .html("Mural hasn't come back after restarting. Check it has power and is on the network, " +
+                          "then <a href=\"/\">reload</a>.");
+                return;
+            }
+            setTimeout(poll, 1500);
+        }
+    };
+    // The device is definitely still up for a moment after the event, so give
+    // the restart time to actually take the server down before polling.
+    setTimeout(poll, 2500);
+}
+
+let deviceStateAfterFinish = null;
+
+// Persisted per browser: it is a property of how the machine is hung and where
+// the paper is taped, not of the image, so it should survive picking a new one.
+function getPlacement() {
+    const value = $("#placementSelect").val();
+    return value === 'topLeft' ? 'topLeft' : 'centre';
 }
 
 function getInfillDensity() {
@@ -2226,24 +2754,27 @@ function renderDefaultPenTypeSelect() {
     }
 }
 
+// Reflects the firmware's motorsFree flag on the retract screen. While released,
+// the jog controls are disabled: with no drive current they would silently do
+// nothing, which reads as broken rather than as a mode you are in.
+function renderMotorsFree(state) {
+    const free = !!(state && state.motorsFree);
+    $("#freeMotorsBtn")
+        .prop('disabled', false)
+        .text(free ? 'Hold motors' : 'Release motors (pull belts by hand)')
+        .toggleClass('btn-outline-secondary', !free)
+        .toggleClass('btn-warning', free);
+    $("#motorsFreeWarning").toggle(free);
+    // The retract screen's own jog switches - not the tools-panel sliders, which
+    // belong to a different screen and a different situation.
+    $("#leftMotorToggle, #rightMotorToggle").prop('disabled', free);
+    $("#beltsRetracted").prop('disabled', free);
+}
+
 function getPenSwapServoValueFromInputValue() {
-    const inputValue = parseInt($("#penSwapServoRange").val());
-    const value = 90 - inputValue;
-    if (value < 0) {
-        return 0;
-    } else if (value > 90) {
-        return 90;
-    }
-    return value;
+    return invertWithinLockedRange(parseInt($("#penSwapServoRange").val()));
 }
 
 function getResumePenServoValueFromInputValue() {
-    const inputValue = parseInt($("#resumePenRange").val());
-    const value = 90 - inputValue;
-    if (value < 0) {
-        return 0;
-    } else if (value > 90) {
-        return 90;
-    }
-    return value;
+    return invertWithinLockedRange(parseInt($("#resumePenRange").val()));
 }

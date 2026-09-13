@@ -1,6 +1,6 @@
 import { loadPaper } from './paperLoader';
 import {Potrace} from './tracer';
-import { buildGrayscaleBitmap, computeGrayscaleThreshold } from './grayscale';
+import { BACKGROUND_LUMINANCE_THRESHOLD, buildGrayscaleBitmap, computeGrayscaleThreshold } from './grayscale';
 import { PaletteEntry } from './types';
 import { chooseSampleSpacingPx, computeGradientField, serializeGradientField } from './imageGradient';
 
@@ -10,52 +10,13 @@ const paper = loadPaper();
 const WHITE_COLOR = new paper.Color("#FFFFFF");
 
 export function vectorizeImageData(imageData: ImageData, turdSize: number): string {
-    const colorMatrix: paper.Color[][] = []
+    // Shares grayscale.ts's bitmap builder with the tonal path, which has always
+    // thresholded on luminance. Building the bitmap straight from the ImageData
+    // also skips the intermediate paper.Color per pixel that this used to
+    // allocate - 4.7 million objects for a 2400x1957 raster.
+    const data = buildGrayscaleBitmap(imageData, BACKGROUND_LUMINANCE_THRESHOLD);
 
-    for (let row = 0; row < imageData.height; row++) {
-        for (let column = 0; column < imageData.width; column++) {
-            if (!colorMatrix[row]) {
-                colorMatrix[row] = [];
-            }
-            const address = (row * imageData.width + column) * 4;
-            const r = imageData.data[address];
-            const g = imageData.data[address + 1];
-            const b = imageData.data[address + 2];
-            const a = imageData.data[address + 3];
-            const color = new paper.Color(r / 255, g / 255, b / 255, a / 255);
-            colorMatrix[row][column] = color;
-        }
-    }
-
-    return createPathsFromColorMatrix(colorMatrix, turdSize);
-}
-
-
-function createPathsFromColorMatrix(colorMatrix: paper.Color[][], turdSize: number): string {
-    const width = colorMatrix[0].length;
-    const height = colorMatrix.length;
-
-    const data: (1|0)[] = [];
-    for (let row = 0; row < height; row++) {
-        for (let column = 0; column < width; column++) {
-            let bmColor: (1|0) = 0;
-            const currentColor = colorMatrix[row][column];
-            
-            if (currentColor.alpha > 0 && !currentColor.equals(WHITE_COLOR)) {
-                bmColor = 1;
-            }
-
-            data.push(bmColor);
-        }
-    }
-
-    const tracer = Potrace();
-    tracer.setParameter({"turdsize": turdSize});
-    tracer.setBitmap(width, height, data);
-
-    const svgString: string = tracer.getSVG(1);
-
-    return svgString;
+    return traceBitmap(imageData.width, imageData.height, data, turdSize);
 }
 
 // Squared distance in R/G/B, [0,1]-normalized channels (paper.Color's native
@@ -75,10 +36,10 @@ function colorToHex(color: paper.Color): string {
     return color.toCSS(true);
 }
 
-// -1 is the "background" sentinel: fully transparent or pure-white pixels,
-// same convention as createPathsFromColorMatrix's single-mask bmColor test
-// above - never assigned to any palette entry, so they never appear in any
-// mask.
+// -1 is the "background" sentinel: fully transparent or near-white pixels
+// (isBackgroundColor below, which has always used a tolerance rather than the
+// exact-white test the single-mask path used to) - never assigned to any
+// palette entry, so they never appear in any mask.
 const BACKGROUND_INDEX = -1;
 
 // Shared confident-pixel/confident-cluster threshold: derived from how far
@@ -544,9 +505,9 @@ export type GrayscaleLevelResult = {
 // 1's bitmap includes every non-transparent pixel at or darker than a light
 // threshold; each subsequent level uses a darker threshold, so its bitmap is
 // a subset of the previous level's. Used for tonal/grayscale rendering, where
-// each level is later given its own infill density. Fully independent of
-// vectorizeImageData/createPathsFromColorMatrix above, which remain untouched
-// so the default 1-bit path stays byte-identical.
+// each level is later given its own infill density. Shares its bitmap
+// builder and tracer with vectorizeImageData above, which now thresholds on
+// luminance the same way.
 export function vectorizeImageDataGrayscale(imageData: ImageData, turdSize: number, levels: number): GrayscaleLevelResult[] {
     const results: GrayscaleLevelResult[] = [];
     for (let level = 1; level <= levels; level++) {

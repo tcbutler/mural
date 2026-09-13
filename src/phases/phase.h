@@ -14,6 +14,10 @@ class Phase {
     virtual void doneWithPhase(AsyncWebServerRequest *request) = 0;
     virtual void estepsCalibration(AsyncWebServerRequest *request) = 0;
     virtual void installTestPattern(AsyncWebServerRequest *request) = 0;
+    // Re-plot the command file already on the device, without re-uploading it.
+    virtual void useStoredCommands(AsyncWebServerRequest *request) = 0;
+    // Abandons a paused drawing - see Runner::cancelRun.
+    virtual void cancelDrawing(AsyncWebServerRequest *request) = 0;
     // Pause/resume primitive (generalized - see docs/multi-color.md section 4): only
     // meaningful during the Drawing phase, 400s everywhere else via NotSupportedPhase.
     virtual void pauseDrawing(AsyncWebServerRequest *request) = 0;

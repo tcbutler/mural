@@ -311,11 +311,17 @@ bool Movement::extendToPoint(double x, double y, int& moveTime)
 {
     setOrigin();
 
-    startedHoming = true;
     float moveTimeF;
     if (!beginLinearTravel(x, y, moveSpeedSteps, moveTimeF)) {
         return false;
     }
+
+    // Only after the travel is actually under way. Setting this before the check
+    // meant a refused move still looked like homing had begun, and
+    // ExtendToHomePhase::loopPhase - which advances on
+    // hasStartedHoming() && !isMoving() - would step straight on to pen
+    // calibration with the belts still fully retracted.
+    startedHoming = true;
     moveTime = int(ceil(moveTimeF));
     return true;
 };
@@ -528,6 +534,24 @@ void Movement::disableMotors() {
     rightMotor->disableOutputs();
 }
 
+void Movement::releaseMotors() {
+    // See the header: enableOutputs() writes EN HIGH, which switches the
+    // active-low driver OFF and lets the belts be pulled through by hand.
+    leftStepper(0);
+    rightStepper(0);
+    leftMotor->enableOutputs();
+    rightMotor->enableOutputs();
+    motorsReleased = true;
+    Serial.println("Motors released - belts can be pulled by hand");
+}
+
+void Movement::holdMotors() {
+    leftMotor->disableOutputs();
+    rightMotor->disableOutputs();
+    motorsReleased = false;
+    Serial.println("Motors holding");
+}
+
 bool Movement::isMoving() {
     return moving;
 }
@@ -538,4 +562,12 @@ bool Movement::hasStartedHoming() {
 
 int Movement::getTopDistance() {
     return topDistance;
+}
+
+double Movement::estimateTravelSeconds(double distanceMm, int speedSteps) const {
+    if (speedSteps <= 0 || circumference <= 0 || distanceMm <= 0) {
+        return 0;
+    }
+    const double mmPerStep = circumference / stepsPerRotation;
+    return distanceMm / (speedSteps * mmPerStep);
 }

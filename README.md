@@ -8,7 +8,7 @@ The original hardware and firmware are excellent and this fork changes neither i
 >
 > Everything here is verified in software — 205 automated tests, three firmware
 > build configurations, and a mock-firmware harness that runs the whole web UI
-> without a machine attached. **None of it has drawn a physical line yet**; we're
+> without a machine attached (`node tools/mock_firmware.js`). **None of it has drawn a physical line yet**; we're
 > waiting on parts. Treat the drawing-quality claims as "the geometry is correct
 > and the previews look right", not "this has been proven on paper."
 
@@ -98,7 +98,9 @@ Build them with `pio run -e esp32dev-tmcuart` or `-e esp32dev-smooth`. The defau
 | [Multi-colour design](docs/multi-color.md) | Colour separation, pen swaps, knockout and trapping |
 | [TMC2209 UART](docs/tmc-uart.md) | Wiring and bench-testing the optional stall detection |
 | [Motion smoothing](docs/motion-smoothing.md) | The optional velocity-carrying motion path |
+| [Pen servo PWM](docs/pen-servo.md) | Why the pen drives LEDC directly, and the ESP32Servo double-attach bug it sidesteps |
 | [Bill of materials](BOM.md) | Unchanged from the original |
+| [Mock firmware harness](tools/mock_firmware.js) | Run the whole web UI with no machine attached, including injected faults |
 
 Original project documentation remains at **[getmural.me](https://getmural.me)**.
 

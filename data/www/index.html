@@ -5,15 +5,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mural</title>
-  <link rel="stylesheet/less" type="text/css" href="dpad.less" />
+  <link rel="stylesheet" type="text/css" href="dpad.css" />
   <link href="main.css" rel="stylesheet">
 </head>
 
 <body>
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-throttle-debounce/1.1/jquery.ba-throttle-debounce.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/less" ></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js" integrity="sha512-NApOOz1j2Dz1PKsIvg1hrXLzDFd62+J0qOPIhm8wueAnk4fQdSclq6XvfzvejDs6zibSoDC+ipl1dC66m+EoSQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- Served by the plotter, not by a CDN. A machine on a wall is reachable on
+       the LAN long before it is reachable through a working internet
+       connection, and when these came from cdnjs the page rendered as a bare
+       "Mural" link with every screen hidden. tools/check_offline.py fails the
+       build if an external reference comes back. -->
+  <script src="vendor/jquery.min.js"></script>
+  <script src="vendor/jquery.ba-throttle-debounce.min.js"></script>
+  <script src="vendor/paper-full.min.js"></script>
   <script src="modal.js" type="module"></script>
   <script src="main.js" type="module"></script>
   <div id="errorAlertContainer" style="position:fixed; top:10px; left:10px; right:10px; z-index:2000;"></div>
@@ -23,33 +27,60 @@
       </div>
       <div id="retractBeltsSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
-        <h3 class="mb-2 fw-normal">Retract belts</h3>
-        <ul class="instr-list">
-          <li class="instr-line">Place the belt loops on the homing screws.</li>
-          <li class="instr-line">Retract the belts until the motors stall.</li>
-          <li class="instr-line"><b>Don't</b> let the motors stall for too long.</li>
-        </ul>
-        <div class="mb-4">
-          <div class="d-flex align-items-center mb-2">
+        <h3 class="mb-3 fw-normal">Retract belts</h3>
+
+        <!-- Laid out as the three physical actions this screen actually asks for,
+             with each one's controls beneath it. Previously every instruction sat
+             at the top and every control at the bottom, leaving the reader to pair
+             them up. -->
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">1</span> Place the belt loops</div>
+          <p class="substep-hint">Hook both belt loops onto the homing screws.</p>
+          <div class="alert alert-warning py-2 mb-2" id="motorsFreeWarning" style="display:none;">
+            Motors are released &mdash; the belts will run out freely and Mural will not
+            hold itself up. Only do this with the machine resting or supported. Press
+            <b>Hold motors</b> before jogging or continuing.
+          </div>
+          <p class="substep-hint">
+            If the belts are fully out, the motors hold too firmly to pull them
+            through by hand &mdash; release them, pull the slack in, then hold again.
+          </p>
+          <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="freeMotorsBtn">Release motors (pull belts by hand)</button>
+        </div>
+
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">2</span> Retract the belts</div>
+          <p class="substep-hint">
+            Run each motor until its belt is retracted and the motor stalls.
+            <b>Don't</b> let a motor stall for long.
+          </p>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="autoRetractButton" style="display:none;">Auto-retract</button>
+          <p class="substep-hint" id="manualRetractHint" style="display:none;">If auto-detection fails, use the manual controls below.</p>
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" role="switch" id="leftMotorToggle">
+            <label class="form-check-label" for="leftMotorToggle">Left motor</label>
+          </div>
+          <div class="d-flex align-items-center mb-3">
             <div class="spinner-border spinner-border-sm me-2" id="leftRetractSpinner" role="status" style="visibility:hidden;"></div>
             <span id="leftRetractLabel">Left belt: idle</span>
+          </div>
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" role="switch" id="rightMotorToggle">
+            <label class="form-check-label" for="rightMotorToggle">Right motor</label>
           </div>
           <div class="d-flex align-items-center">
             <div class="spinner-border spinner-border-sm me-2" id="rightRetractSpinner" role="status" style="visibility:hidden;"></div>
             <span id="rightRetractLabel">Right belt: idle</span>
           </div>
         </div>
-        <button class="w-100 btn btn-lg btn-primary mb-4" id="autoRetractButton" style="display:none;">Auto-retract</button>
-        <h6 class="mb-2" id="manualRetractHint" style="display:none;"><small class="text-muted">If auto-detection fails, use the manual controls below.</small></h6>
-        <div class="form-check form-switch mb-5">
-          <input class="form-check-input" type="checkbox" role="switch" id="leftMotorToggle">
-          <label class="form-check-label" for="leftMotorToggle">Left motor</label>
+
+        <div class="substep">
+          <div class="substep-title"><span class="substep-num">3</span> Continue</div>
+          <p class="substep-hint">Both belts retracted and the loops still seated?</p>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="beltsRetracted">Belts are retracted</button>
         </div>
-        <div class="form-check form-switch mb-5">
-          <input class="form-check-input" type="checkbox" role="switch" id="rightMotorToggle">
-          <label class="form-check-label" for="rightMotorToggle">Right motor</label>
-        </div>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="beltsRetracted">Belts are retracted</button>
+
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
       </div>
       <div id="distanceBetweenAnchorsSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
@@ -67,7 +98,8 @@
         <ul class="instr-list">
           <li class="instr-line" id="extendToHomeText">The belts will extend to their home position. Make sure the belts are unobstructed and the motors do not skip, or the drawing accuracy may be affected.</li>
         </ul>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="extendToHome">Extend to home position</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="extendToHome">Extend to home position</button>
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
         <div class="spinner-border mb-5 loading" id="extendingSpinner" role="status" style="visibility:hidden;"></div>
       </div>
       <div id="penCalibrationSlide" class="muralSlide" style="display:none;">
@@ -87,7 +119,16 @@
             <button type="button" class="btn btn-primary fs-4" id="penPlus">+</button>
           </div>
         </div>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="setPenDistance">Pen is touching the wall</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="setPenDistance">Pen is touching the wall</button>
+        <!-- Loading a pen is a precondition for calibrating one, so it belongs on
+             this screen. Previously the only route to the release position was the
+             tools panel, whose cog is hidden here. -->
+        <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="penCalReleaseHolder">No pen loaded? Release the holder</button>
+        <div class="alert alert-info py-2 mb-2" id="penCalReleaseHint" style="display:none;">
+          Holder released. Fit the pen carrier, then use &minus;/+ or the slider to
+          bring the pen back down to the wall.
+        </div>
+        <button class="w-100 btn btn-lg btn-link mb-5 start-over-btn">Start over</button>
       </div>
       <div id="svgUploadSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
@@ -117,6 +158,15 @@
             <button type="button" class="btn btn-outline-secondary w-100 paper-preset-btn" style="flex:1;" data-w="420" data-h="594">A2</button>
           </div>
           <div id="targetSizeWarning" class="alert alert-warning py-2 mb-2" style="display:none;"></div>
+          <!-- Where a drawing smaller than the drawable area lands. Centring is
+               both what you'd expect and where the machine draws best: a
+               V-plotter's geometry degrades towards the edges of its reach, so
+               the top-left corner is the most distorted place to draw. -->
+          <label for="placementSelect" class="form-label mb-0">Position on the wall</label>
+          <select class="form-select mb-2" id="placementSelect">
+            <option value="centre" selected>Centred on home position</option>
+            <option value="topLeft">Top-left of drawable area</option>
+          </select>
         </div>
         <div class="container svg-control mb-2" style="display: none;">
           <div class="row">
@@ -140,9 +190,14 @@
             <h6><small class="text-muted" id="transformText"></small></h6>
           </div>
         </div>
-        <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg">
+        <h6 class="mb-2"><small class="text-muted">Upload an SVG drawing, or a photo (JPEG, PNG, WebP)</small></h6>
+        <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
         <button class="w-100 btn btn-lg btn-primary mb-6" id="preview" disabled>Preview drawing</button>
         <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="installTestPatternButton">Draw calibration test pattern</button>
+        <!-- Only shown when the device still holds a command file (state.hasCommands).
+             Mural restarts after every plot, so re-plotting the same image would
+             otherwise mean re-uploading it. -->
+        <button class="w-100 btn btn-lg btn-primary mb-5" id="useStoredCommandsButton" style="display:none;">Plot the image already on Mural</button>
         <hr class="my-4">
         <h6 class="mb-2"><small class="text-muted">Or re-upload a previously saved command file</small></h6>
         <input class="form-control form-control-lg mb-2" id="uploadCommandsFile" type="file" accept=".txt,.commands">
@@ -195,6 +250,10 @@
                   </div>
                 </div>
                 <label for="previewZoomToggle" class="zoom-open">&#10530; Enlarge</label>
+                <!-- Only meaningful while enlarged; hidden until zoomed in (see
+                     previewZoom.js), so the fit view stays uncluttered. -->
+                <span class="zoom-scale" id="previewZoomScale" style="visibility:hidden;">1.0x</span>
+                <span class="zoom-hint" id="previewZoomHint">Pinch or double-tap to zoom &middot; drag to pan</span>
               </div>
               <label for="previewZoomToggle" class="zoom-close">&#10005; Close</label>
             </div>
@@ -394,6 +453,13 @@
         </div>
         <h6 class="mb-2 fw-normal"><small class="text-muted" id="liveStatsText"></small></h6>
         <div class="alert alert-warning" id="liveConnectionNotice" style="display:none;">Connection lost, reconnecting&hellip;</div>
+        <!-- Shown on a StallGuard stall (MURAL_TMC_UART builds). Resume is the
+             documented recovery - see docs/tmc-uart.md - so this explains what to
+             do rather than leaving the state unexplained. -->
+        <div class="alert alert-danger" id="stallNotice" style="display:none;">
+          A motor stalled and the pen has been lifted. Clear whatever the belts caught on,
+          then Resume &mdash; the interrupted move is retried, so no power cycle is needed.
+        </div>
         <div class="card mb-2" id="penSwapPanel" style="display:none;">
           <div class="card-body">
             <h5 class="card-title" id="penSwapTitle">Insert pen</h5>
@@ -407,11 +473,32 @@
                 <button type="button" class="btn btn-primary fs-4" id="penSwapPlus">+</button>
               </div>
             </div>
+            <!-- Drives to the calibrated release angle so the old pen can be taken
+                 out and the new one seated. Only useful once the holder has been
+                 calibrated in the tools panel, so it hides until then. -->
+            <button class="w-100 btn btn-lg btn-outline-secondary mb-2" id="penSwapUnlockBtn" style="display:none;">Release pen for swapping</button>
             <button class="w-100 btn btn-lg btn-success" id="confirmPenSwapBtn">Pen inserted, continue</button>
           </div>
         </div>
         <button class="w-100 btn btn-lg btn-warning mb-2" id="pauseDrawingBtn">Pause drawing</button>
-        <button class="w-100 btn btn-lg btn-primary mb-5" id="resumeDrawingBtn" style="display:none;">Resume</button>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="resumeDrawingBtn" style="display:none;">Resume</button>
+        <!-- Only offered while paused: cancelling mid-stroke would leave the pen on
+             the wall, and pausing already lifts it and stops cleanly. -->
+        <button class="w-100 btn btn-lg btn-outline-danger mb-5" id="cancelDrawingBtn" style="display:none;">Cancel this drawing</button>
+
+        <!-- Shown when the plot finishes. Mural reboots straight after the final
+             progress event (Runner::getNextTask calls ESP.restart), so this
+             waits for the device to answer again before offering any action
+             that needs it, rather than assuming a fixed delay. -->
+        <div id="drawingFinishedPanel" style="display:none;">
+          <div class="alert alert-success mb-3" id="drawingFinishedSummary">Drawing complete.</div>
+          <div class="alert alert-warning mb-3" id="finishedReconnectNotice">
+            Mural restarts after a plot &mdash; waiting for it to come back&hellip;
+          </div>
+          <button class="w-100 btn btn-lg btn-primary mb-2" id="plotAgainBtn" disabled>Plot this again</button>
+          <button class="w-100 btn btn-lg btn-secondary mb-2" id="newImageBtn" disabled>Plot a new image</button>
+          <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="downloadFinishedCommands">Download command file</button>
+        </div>
       </div>
       <div id="resumeDrawingSlide" class="muralSlide" style="display: none;">
         <div class="ui-topbar"><span class="eyebrow">Resume</span></div>
@@ -463,6 +550,50 @@
         <label for="rightMotorTool" class="form-label">Right Motor</label>
         <input type="range" class="form-range mb-5 text-center" min="-1" max="1" id="rightMotorTool" value="0">
         <button class="w-100 btn btn-lg btn-primary mb-5" id="parkServoTool">Park Servo</button>
+        <hr>
+        <!-- Pen-holder geometry. Machine setup, not per-plot: the holder is a cam,
+             so there is a range of angles over which the pen is actually retained,
+             and a little past the top is where it can be lifted out. The drawing
+             contact point (the wizard's pen calibration step) lives between the two
+             locked limits. -->
+        <h6 class="mb-2">Pen holder calibration</h6>
+        <h6 class="mb-3"><small class="text-muted">
+          Jog the servo and record three positions. Higher angles raise the pen.
+          Record the <b>lowest</b> and <b>highest</b> angles at which the pen is still
+          held, then the <b>unlocked</b> angle where it can be lifted out &mdash; usually
+          only a few degrees above the highest. Going much further risks the mechanism
+          not re-engaging the holder when a pen is put back.
+        </small></h6>
+        <label for="penCalRange" class="form-label mb-0">Servo angle: <span id="penCalAngle">90</span>&deg;</label>
+        <input type="range" class="form-range mb-2 text-center" min="0" max="180" step="1" id="penCalRange" value="90">
+        <div class="btn-group mb-3 btn-group-lg w-100" role="group">
+          <button type="button" class="btn btn-outline-secondary" id="penCalMinus5">&minus;5</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalMinus1">&minus;1</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalPlus1">+1</button>
+          <button type="button" class="btn btn-outline-secondary" id="penCalPlus5">+5</button>
+        </div>
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td>Lowest locked</td>
+              <td><span id="penCalLowestVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordLowest">Record</button></td>
+            </tr>
+            <tr>
+              <td>Highest locked</td>
+              <td><span id="penCalHighestVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordHighest">Record</button></td>
+            </tr>
+            <tr>
+              <td>Unlocked (load pen)</td>
+              <td><span id="penCalUnlockedVal">&mdash;</span>&deg;</td>
+              <td><button class="btn btn-sm btn-outline-primary" id="penCalRecordUnlocked">Record</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="alert alert-warning py-2 mb-2" id="penCalWarning" style="display:none;"></div>
+        <button class="w-100 btn btn-lg btn-primary mb-2" id="penCalSave">Save pen limits</button>
+        <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="penCalUnlockNow">Move to unlocked (load a pen)</button>
         <button class="w-100 btn btn-lg btn-primary mb-2" id="estepsTool">Extend 1000mm (E-steps calibration)</button>
         <label for="estepsMeasuredInput" class="form-label">Measured travel (mm)</label>
         <div class="input-group mb-5">
@@ -478,6 +609,15 @@
         <label for="diameterInput" class="form-label">Effective pulley diameter (mm)</label>
         <input type="number" step="any" class="form-control mb-3" id="diameterInput">
         <label for="homedStepOffsetInput" class="form-label">Homed step offset (mm)</label>
+        <h6 class="mb-2"><small class="text-muted">
+          Belt length the firmware assumes at the fully-retracted home position.
+          Anything between the anchor point and the belt end counts here &mdash; if
+          the belts are hooked to carabiners rather than straight onto the nails,
+          add their length. Getting this wrong skews the whole coordinate system,
+          worst towards the edges of the drawable area. Note it is a single value
+          applied to both motors, so unequal hardware on the two sides cannot be
+          expressed and will leave a skew no calibration can remove.
+        </small></h6>
         <input type="number" step="any" class="form-control mb-3" id="homedStepOffsetInput">
         <button class="w-100 btn btn-lg btn-primary mb-5" id="savePhysicsConstantsTool">Save physics constants</button>
       </div>

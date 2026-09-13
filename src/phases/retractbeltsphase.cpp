@@ -6,6 +6,13 @@ RetractBeltsPhase::RetractBeltsPhase(PhaseManager* manager, Movement* movement) 
 }
 
 void RetractBeltsPhase::doneWithPhase(AsyncWebServerRequest *request) {
+    // The belts may have been released for manual retraction (see
+    // handleSetMotorsFree). Everything after this phase assumes the motors hold
+    // position, so restore drive current here rather than trusting the UI to
+    // have toggled it back - leaving this phase with the belts free would let
+    // the machine drop the moment it is asked to move.
+    movement->holdMotors();
+
     manager->setPhase(PhaseManager::ExtendToHome);
     manager->respondWithState(request);
 }

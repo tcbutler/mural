@@ -113,7 +113,7 @@ function recommendInfillDensity(characteristics: ImageCharacteristics): Recommen
 
 // --- turdSize (despeckle) ------------------------------------------------
 //
-// Potrace's turdSize (vectorizer.ts's createPathsFromColorMatrix) drops
+// Potrace's turdSize (vectorizer.ts's vectorizeImageData) drops
 // traced regions below this pixel-area threshold - useful for suppressing
 // noise, harmful if it eats real fine detail. Flat art has clean, deliberate
 // edges (edgeFraction is a real signal, not noise), so a small threshold is

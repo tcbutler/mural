@@ -20,7 +20,28 @@ import csv
 import os
 import sys
 
-MIN_FS_HEADROOM_BYTES = 512 * 1024  # 512KB reserved for user command files at runtime.
+# Free LittleFS space reserved for the user's command file at runtime.
+#
+# This was 512KB, chosen without measurement. The OTA partition layout trades
+# filesystem space for a second app slot (LittleFS 2400K -> 832K), which put the
+# free space 35,377 bytes below that number - so the figure had to be either
+# justified or corrected rather than simply lowered until the gate went quiet.
+#
+# Measured, by rendering through the real pipeline (tsc/src/toCommands.ts) and
+# sizing the resulting command file:
+#
+#   A4 flat vector art, default infill                   2 KB
+#   A2 flat vector art, densest infill                  11 KB
+#   Traced photo, 4 grey levels, full 2400px raster     68 KB
+#   A2, 6 pens, densest infill, full 2400px raster     233 KB   <- worst constructed
+#
+# Command files are small because they are terse text: about 12 bytes per move.
+# Even the heaviest case above is 28,610 commands at 233KB. 384KB is ~1.6x that
+# worst case, which the OTA layout satisfies with 488KB free.
+#
+# If a real plot ever exceeds this, raise it and shrink the app slots to match
+# (1472K each would return 256KB to the filesystem) rather than removing the gate.
+MIN_FS_HEADROOM_BYTES = 384 * 1024
 
 # Must match the parameters PlatformIO's LittleFS image builder uses
 # (see builder/main.py in the espressif32 platform: build_fs_image()).

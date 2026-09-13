@@ -11,12 +11,19 @@ const paper = loadPaper();
 // gradientHatch.ts): generatePaths() (generator.ts) only ever propagates
 // the density/outline/colorIndex/spacingMm tags down onto individual
 // paths, so a gradientField tag on the imported SVG's root item never
-// reaches the flat `paths` array this module receives. It DOES stay
-// mounted in the live paper.js project tree for the whole render, though
-// (toCommands.ts's paper.project.importJSON never removes it, and
-// generatePaths only collects paths into a return array - it doesn't
-// prune the tree), so it can be recovered here by walking the project
-// directly instead of needing it threaded through any function signature.
+// reaches the flat `paths` array this module receives.
+//
+// It used to be recovered by walking the live paper.js project tree, on the
+// assumption that the tagged root stayed mounted for the whole render. It does
+// not: by the time generateInfills() runs, the project holds one untagged Path
+// and the tagged Group is gone. So gradientHatch never received a field for any
+// image and silently delegated to crossHatch45 every time - producing output
+// byte-identical to the fixed-angle fill, which is exactly what "gradient hatch
+// does nothing" looked like from outside.
+//
+// The field is now passed in from toCommands.ts, which captures it off the
+// imported item before any of that restructuring happens. The project walk is
+// kept as a fallback for callers that do not supply one.
 type GradientFieldTag = { gradientField?: SerializedGradientField };
 
 // Only Group/Layer nodes are visited (a Path/CompoundPath never carries
@@ -53,10 +60,7 @@ function findGradientFieldTag(project: paper.Project): SerializedGradientField |
 // happen at most once here), or returns undefined when this render's
 // source SVG carries no gradient field at all (vector-origin/path-tracing
 // input, which never calls vectorize() in the first place).
-function buildGradientFieldLookup(project: paper.Project): GradientFieldLookup | undefined {
-    const tag = findGradientFieldTag(project);
-    if (!tag) return undefined;
-
+function makeGradientFieldLookup(tag: SerializedGradientField): GradientFieldLookup {
     const field = deserializeGradientField(tag);
     return {
         sampleAt(point: paper.Point, viewSize: paper.Size) {
@@ -64,6 +68,19 @@ function buildGradientFieldLookup(project: paper.Project): GradientFieldLookup |
             return sampleGradientField(field, point.x / viewSize.width, point.y / viewSize.height);
         },
     };
+}
+
+function buildGradientFieldLookup(project: paper.Project): GradientFieldLookup | undefined {
+    const tag = findGradientFieldTag(project);
+    if (!tag) return undefined;
+    return makeGradientFieldLookup(tag);
+}
+
+// The gradientField tag as it sits on the imported item, for toCommands.ts to
+// capture before the render restructures the tree out from under it.
+export function readGradientFieldTag(item: paper.Item): SerializedGradientField | undefined {
+    const data = item.data as GradientFieldTag | undefined;
+    return data && data.gradientField ? data.gradientField : undefined;
 }
 
 // Spacing (mm) between adjacent cross-hatch lines at each density level.
@@ -103,7 +120,7 @@ const infillDensityToSpacingMap = new Map<Exclude<InfillDensity, 0>, number>([
 // Omitted (the pre-existing call shape, used by every caller before this
 // parameter existed) falls back to defaultFillStrategyName exactly as
 // before, so this is purely additive.
-export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: InfillDensity, defaultFillMethod?: string): InfilledPath[] {
+export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: InfillDensity, defaultFillMethod?: string, gradientFieldOverride?: SerializedGradientField): InfilledPath[] {
     const view = paper.project.view;
     const boundsPath = new paper.Path.Rectangle(view.bounds);
 
@@ -111,7 +128,10 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
     // `cache` to memoize expensive per-spacing precomputation (e.g. a line
     // grid) across paths; it's fresh per generateInfills() call, matching
     // the original code's per-call `linesBySpacing` map.
-    const ctx: FillContext = {view, boundsPath, cache: new Map(), gradientField: buildGradientFieldLookup(paper.project)};
+    const gradientField = gradientFieldOverride
+        ? makeGradientFieldLookup(gradientFieldOverride)
+        : buildGradientFieldLookup(paper.project);
+    const ctx: FillContext = {view, boundsPath, cache: new Map(), gradientField};
 
     // White-as-knockout (see flattener.ts's applyWhiteKnockout): a pure
     // white fill with no stroke of its own is dropped entirely (matching

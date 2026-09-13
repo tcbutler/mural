@@ -1,4 +1,5 @@
 #include "phasemanager.h"
+#include <esp_system.h>
 #include "retractbeltsphase.h"
 #include "settopdistancephase.h"
 #include "extendtohomephase.h"
@@ -15,7 +16,8 @@
 #include <stdexcept>
 #include <cstring>
 
-PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner) {
+PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner, NetWatch* netWatch) {
+    this->netWatch = netWatch;
     retractBeltsPhase = new RetractBeltsPhase(this, movement);
     setTopDistancePhase = new SetTopDistancePhase(this, movement, pen);
     extendToHomePhase = new ExtendToHomePhase(this, movement, runner);
@@ -26,6 +28,7 @@ PhaseManager::PhaseManager(Movement* movement, Pen* pen, Runner* runner) {
     resumeDrawingPhase = new ResumeDrawingPhase(this, movement, pen);
 
     this->movement = movement;
+    this->pen = pen;
     reset();
 }
 
@@ -73,6 +76,33 @@ void PhaseManager::setPhase(PhaseNames name) {
     }
 }
 
+const char* PhaseManager::getUploadError() {
+    return svgSelectPhase->getUploadError();
+}
+
+
+// Why the chip last restarted. Nothing recorded this, so a device found wedged -
+// silent on serial, unresponsive on HTTP, not in the captive portal - told us
+// nothing after a reset put it right. A panic, a watchdog and a brownout all look
+// identical from the network, and they have completely different causes: a
+// brownout points at the shared 5V rail under motor and servo load, a task
+// watchdog at something blocking loop().
+static const char* resetReasonName() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:  return "poweron";
+        case ESP_RST_EXT:      return "external";
+        case ESP_RST_SW:       return "software";
+        case ESP_RST_PANIC:    return "panic";
+        case ESP_RST_INT_WDT:  return "interruptWatchdog";
+        case ESP_RST_TASK_WDT: return "taskWatchdog";
+        case ESP_RST_WDT:      return "otherWatchdog";
+        case ESP_RST_DEEPSLEEP: return "deepSleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO:     return "sdio";
+        default:               return "unknown";
+    }
+}
+
 void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     auto currentPhase = getCurrentPhase()->getName();
     auto moving = movement->isMoving();
@@ -110,6 +140,38 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
 
     root["phase"] = currentPhase;
     root["moving"] = moving;
+    // Whether a homing/extend move has been commanded. Read but never sent: the
+    // UI's ExtendToHome branch restores the spinner from state.startedHoming, so
+    // without this a page refresh mid-extend showed an idle, enabled button, and
+    // a second press would re-run setOrigin() in the middle of the travel - which
+    // re-zeros the belt position and loses the machine's idea of where it is.
+    root["startedHoming"] = startedHoming;
+    // Link health, so "the web UI won't load" can be answered with a number
+    // instead of a guess. rssi is dBm (roughly: -50 excellent, -70 usable, -80
+    // and below is where this machine started dropping packets); wifiReconnects
+    // counts drops recovered since boot.
+    root["rssi"] = netWatch->getRssi();
+    root["wifiReconnects"] = netWatch->getReconnects();
+    // Free heap, and the largest single block of it. Measured serving the UI on
+    // a device that had been up an hour: 165KB of worker.js came down at 20KB/s,
+    // index.html managed 4,129 of 44,172 bytes in 30 seconds (137 B/s) and
+    // then stalled, and OTA died partway. Small requests stayed fine
+    // throughout, which is what a starved or fragmented heap looks like from
+    // the outside - AsyncTCP cannot get buffers, so anything sustained crawls.
+    // largestFreeBlock matters as much as the total: OTA and the async server
+    // need contiguous allocations, and fragmentation shows up here first.
+    root["freeHeap"] = ESP.getFreeHeap();
+    root["largestFreeBlock"] = ESP.getMaxAllocHeap();
+    root["uptimeSeconds"] = millis() / 1000;
+    // Transmit power, and which AP it actually joined. RSSI only describes the
+    // downlink; these describe the uplink and the choice of peer, which is where
+    // a "close to the access point but slow" link hides.
+    root["txPowerDbm"] = netWatch->getTxPowerDbm();
+    root["bssid"] = netWatch->getBssid();
+    root["channel"] = netWatch->getChannel();
+    // Survives the restart it describes, so a hang can be diagnosed after the
+    // fact instead of only while it is happening.
+    root["resetReason"] = resetReasonName();
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;
@@ -117,6 +179,20 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     root["storedTopDistance"] = storedTopDistance;
     root["storedPenAngle"] = storedPenAngle;
     root["uploadCrc32"] = svgSelectPhase->getUploadCrc32();
+    // Whether /commands holds a previously plotted file, so the UI can offer to
+    // re-plot it instead of making the user re-upload. Survives the restart that
+    // follows every plot; uploadCrc32 does not, being in-memory.
+    root["hasCommands"] = LittleFS.exists("/commands");
+    // Calibrated pen-holder geometry (see prefskeys.h). The UI needs these to
+    // bound its own sliders: the contact point must stay inside the locked
+    // range, and the release position sits above it.
+    root["penLowestLocked"] = pen->getLowestLocked();
+    root["penHighestLocked"] = pen->getHighestLocked();
+    root["penUnlocked"] = pen->getUnlockedAngle();
+    // Whether drive current is currently cut so the belts can be pulled by hand
+    // (see handleSetMotorsFree). The UI reflects this rather than tracking it
+    // locally, so a reload cannot show the wrong state for something physical.
+    root["motorsFree"] = movement->areMotorsReleased();
     root["resuming"] = resuming;
     root["resumePercent"] = resumePercent;
     // Multi-color (docs/multi-color.md): which pen was mounted when the

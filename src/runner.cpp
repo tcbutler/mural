@@ -38,11 +38,12 @@ double angleBetweenSegments(Movement::Point a, Movement::Point b, Movement::Poin
 }
 #endif
 
-Runner::Runner(Movement *movement, Pen *pen, Display *display) {
+Runner::Runner(Movement *movement, Pen *pen, Display *display, StatusLed *statusLed) {
     stopped = true;
     this->movement = movement;
     this->pen = pen;
     this->display = display;
+    this->statusLed = statusLed;
     lastError = "";
 }
 
@@ -58,6 +59,70 @@ String Runner::getLastError() {
 // re-applied to whichever one gets updated). Static/pen-and-movement-independent so
 // countTotalCommandLines() can use it too, from a File it opened itself, without
 // needing a Runner instance.
+// --- Time-weighted progress helpers ---------------------------------------
+
+double Runner::estimateSegmentSeconds(Movement::Point from, Movement::Point to, bool penDown) const {
+    const double mm = Movement::distanceBetweenPoints(from, to);
+    // Drawing runs at printSpeedSteps, repositioning at the ~3x faster
+    // moveSpeedSteps (see InterpolatingMovementTask::currentSpeedSteps).
+    return movement->estimateTravelSeconds(mm, penDown ? printSpeedSteps : moveSpeedSteps);
+}
+
+void Runner::scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstimate& out) {
+    // One pass over the command lines, replaying them symbolically: track where
+    // the pen would be and whether it is down, and accumulate the estimated
+    // duration of every move and pen action. This pass already existed to count
+    // lines - it now also costs them, which is why time-weighted progress needs
+    // no extra file read.
+    //
+    // `offset` is a checkpoint position; the work before it is recorded
+    // separately so a resumed plot starts from the right percentage instead of 0.
+    Movement::Point position = startPosition;
+    bool penDown = false;
+    const double penSeconds = pen->estimateMoveSeconds();
+
+    while (openedFile.available()) {
+        if (openedFile.position() <= offset) {
+            out.secondsBeforeOffset = out.totalSeconds;
+        }
+        auto line = openedFile.readStringUntil('\n');
+        out.lines++;
+        if (line.length() == 0) {
+            continue;
+        }
+
+        const char kind = line.charAt(0);
+        if (kind == 'p') {
+            out.totalSeconds += penSeconds;
+            penDown = (line.charAt(1) == '1');
+        } else if (kind == 'c') {
+            // A pen swap blocks on a human, so it has no meaningful duration to
+            // predict. Counting it as zero keeps the remaining work honest.
+            continue;
+        } else {
+            const int sep = line.indexOf(' ');
+            if (sep <= 0) {
+                continue;
+            }
+            Movement::Point target(line.substring(0, sep).toDouble(), line.substring(sep + 1).toDouble());
+            out.totalSeconds += estimateSegmentSeconds(position, target, penDown);
+            position = target;
+        }
+    }
+}
+
+int Runner::computePercent() const {
+    if (totalEstimatedSeconds <= 0) {
+        // No usable estimate (empty plot, or an uncalibrated pen at scan time) -
+        // fall back to the old line-based ratio rather than reporting nothing.
+        return totalLines > 0 ? (int)(executedLines * 100L / totalLines) : 100;
+    }
+    int percent = (int)((completedSeconds / totalEstimatedSeconds) * 100.0);
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return percent;
+}
+
 bool Runner::parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut) {
     paletteCountOut = 0;
 
@@ -149,24 +214,34 @@ bool Runner::initTaskProvider() {
 
     Serial.println("Total distance to travel: " + String(totalDistance));
 
-    // Pre-scan the command lines once so progress can be reported as
-    // executedLines/totalLines instead of tracking distance travelled.
-    auto commandsStart = openedFile.position();
-    totalLines = 0;
-    while (openedFile.available()) {
-        openedFile.readStringUntil('\n');
-        totalLines++;
-    }
-    openedFile.seek(commandsStart);
-
-    executedLines = 0;
-    progress = -1; // so 0% appears right away
-
     Movement::Point startPosition;
     if (!movement->getCoordinates(startPosition)) {
         Serial.println("Not ready to get coordinates");
         return false;
     }
+
+    // Pre-scan the command lines once, counting them and costing them (see
+    // scanPlot). The line count is still reported for the UI's "line n/m"
+    // readout; the durations are what drive `percent`.
+    auto commandsStart = openedFile.position();
+    PlotEstimate estimate;
+    scanPlot(startPosition, 0, estimate);
+    openedFile.seek(commandsStart);
+
+    totalLines = estimate.lines;
+    totalEstimatedSeconds = estimate.totalSeconds;
+    completedSeconds = 0;
+    pendingTaskSeconds = 0;
+    Serial.println("Estimated plot duration: " + String(totalEstimatedSeconds, 1) + "s over " + String(totalLines) + " lines");
+
+    executedLines = 0;
+    progress = -1; // so 0% appears right away
+
+    // Start measuring moves from where the pen actually is. getNextTask() costs
+    // each movement task as the distance from the previous target, so leaving
+    // this at its default would charge the first move a meaningless distance and
+    // peg progress at 100% for the rest of the plot.
+    targetPosition = startPosition;
 
     auto homeCoordinates = movement->getHomeCoordinates();
     finishingSequence[0] = new InterpolatingMovementTask(movement, pen, homeCoordinates);
@@ -200,11 +275,12 @@ Task *Runner::getNextTask()
         // pen up/down or color swap, since those are the moments a redraw would be
         // most visible.
         if (isPenLine || isColorLine || (executedLines % checkpointIntervalLines == 0)) {
-            writeCheckpoint(bookmark);
+            captureCheckpoint(bookmark);
         }
 
         if (isPenLine)
         {
+            pendingTaskSeconds = pen->estimateMoveSeconds();
             if (line.charAt(1) == '1')
             {
                 //Serial.println("Pen down");
@@ -226,12 +302,16 @@ Task *Runner::getNextTask()
                 ? palette[colorIndex - 1]
                 : ("pen " + String(colorIndex));
             Serial.println("Pen swap requested: color " + String(colorIndex) + " (" + name + ")");
+            // Blocks on a human swapping the pen, so it has no duration worth
+            // predicting - matching how scanPlot() costed it.
+            pendingTaskSeconds = 0;
             return new PenSwapTask(pen, movement, this, colorIndex, name);
         }
         else
         {
             auto x = line.substring(0, line.indexOf(" ")).toDouble();
             auto y = line.substring(line.indexOf(" ") + 1).toDouble();
+            auto previousTarget = targetPosition;
             targetPosition = Movement::Point(x, y);
 
 #ifdef MURAL_SMOOTH_MOTION
@@ -265,6 +345,12 @@ Task *Runner::getNextTask()
             targetPosition = mergedTarget;
 #endif
 
+            // Cost this move for progress. Uses the pen's CURRENT state, which is
+            // correct because Runner runs PenTask and movement tasks strictly
+            // sequentially - no movement task ever straddles a pen transition
+            // (see InterpolatingMovementTask's header comment).
+            pendingTaskSeconds = estimateSegmentSeconds(previousTarget, targetPosition, pen->isDown());
+
             return new InterpolatingMovementTask(movement, pen, targetPosition);
         }
     }
@@ -273,6 +359,9 @@ Task *Runner::getNextTask()
         if (sequenceIx < (end(finishingSequence) - begin(finishingSequence))) {
             auto currentIx = sequenceIx;
             sequenceIx = sequenceIx + 1;
+            // The finishing move home is not part of the scanned estimate, so it
+            // costs nothing rather than inheriting the previous task's time.
+            pendingTaskSeconds = 0;
             return finishingSequence[currentIx];
         } else {
             // Drawing completed successfully - clear the checkpoint and tell any
@@ -293,6 +382,11 @@ void Runner::run()
     {
         return;
     }
+
+    // Write out any checkpoint that came due while the pen was down. Deliberately
+    // ahead of the paused/stalled guards below: both of those lift the pen, and a
+    // pause is exactly when the checkpoint most needs to be on flash.
+    flushCheckpointIfPenUp();
 
 #ifdef MURAL_TMC_UART
     // UNTESTED ON HARDWARE: stall monitoring during drawing. If either driver
@@ -325,6 +419,12 @@ void Runner::run()
             // The in-flight task just finished - safe to pause here without cutting
             // a movement short. Lift the pen and stop feeding new tasks from the
             // file; resumeRun() picks up from here.
+            //
+            // Credit it before returning: isDone() is true, so the work really is
+            // done, and resumeRun() overwrites pendingTaskSeconds when it fetches
+            // the next task - so skipping this simply loses that task's time.
+            completedSeconds += pendingTaskSeconds;
+            pendingTaskSeconds = 0;
             penWasDownAtPause = pen->isDown();
             pen->slowUp();
             display->displayText("Paused");
@@ -334,16 +434,20 @@ void Runner::run()
             return;
         }
 
+        // The task that just reported isDone() is genuinely finished, so its
+        // cost becomes elapsed work here rather than when it was dispatched.
+        // Crediting on dispatch is what used to make the final line show 100%
+        // while it was still being drawn.
+        completedSeconds += pendingTaskSeconds;
+        pendingTaskSeconds = 0;
+
         delete currentTask;
         currentTask = getNextTask();
         if (currentTask != NULL)
         {
             currentTask->startRunning();
 
-            auto newProgress = totalLines > 0 ? int(executedLines * 100 / totalLines) : 100;
-            if (newProgress > 100) {
-                newProgress = 100;
-            }
+            auto newProgress = computePercent();
             if (progress != newProgress) {
                 Serial.println("Progress: " + String(newProgress));
                 progress = newProgress;
@@ -353,6 +457,9 @@ void Runner::run()
         }
         else
         {
+            // Last chance: run() returns at the guard above from here on, so a
+            // checkpoint still held in RAM would never reach flash.
+            flushCheckpointIfPenUp();
             stopped = true;
         }
     }
@@ -363,6 +470,31 @@ void Runner::pause() {
         return;
     }
     pauseRequested = true;
+}
+
+// Abandon the plot outright. Deliberately only callable while paused: the pen is
+// on the wall mid-stroke otherwise, and pausing already lifts it and brings the
+// machine to a clean stop. Clearing the checkpoint is what distinguishes this
+// from a pause - without it the abandoned job would be offered for resume on the
+// next boot, which is precisely what the user just declined.
+bool Runner::cancelRun() {
+    if (!paused) {
+        return false;
+    }
+
+    if (pen->isDown()) {
+        pen->slowUp();
+    }
+
+    clearCheckpoint();
+    stopped = true;
+    paused = false;
+    pauseRequested = false;
+
+    Serial.println("Drawing cancelled");
+    display->displayText("Cancelled");
+    pushProgressEvent(true, "cancelled");
+    return true;
 }
 
 bool Runner::isPaused() {
@@ -494,13 +626,10 @@ const char* Runner::getStateName() {
 }
 
 void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stateOverride) {
-    int percent = totalLines > 0 ? int(executedLines * 100 / totalLines) : 100;
-    if (percent > 100) {
-        percent = 100;
-    }
-    if (percent < 0) {
-        percent = 0;
-    }
+    // Same figure the OLED shows - computePercent() is the single definition of
+    // "how far through the plot are we", so the display and the web UI cannot
+    // disagree.
+    const int percent = computePercent();
 
     DynamicJsonBuffer jsonBuffer;
     JsonObject &root = jsonBuffer.createObject();
@@ -510,6 +639,11 @@ void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stat
     root["totalLines"] = totalLines;
     root["x"] = targetPosition.x;
     root["y"] = targetPosition.y;
+    // Diagnostic: longest single checkpoint write this run, in ms. A checkpoint
+    // write stops step generation for its duration, so this is the size of the
+    // worst mid-plot stall the firmware imposed on itself - measurable from the
+    // event stream instead of inferred from the drawing.
+    root["maxCheckpointMs"] = maxCheckpointBlockMs;
     // Multi-color pen swap (docs/multi-color.md sections 2-3): while
     // awaitingSwap is true, tell the UI which pen to prompt for so it can
     // show "Insert pen <penSwapIndex> (<penSwapName>)" alongside the
@@ -524,6 +658,16 @@ void Runner::buildProgressJson(char* buffer, size_t bufferSize, const char* stat
 // Pushes at most ~1/sec (force bypasses the throttle for state-change events, per
 // docs/multi-color.md's "at most ~1/sec and on state changes").
 void Runner::pushProgressEvent(bool force, const char* stateOverride) {
+    // Update the status LED first. This sits above both the events==nullptr
+    // guard and the throttle below on purpose: the LED is the machine's only
+    // local indicator (BOM.md has no display), so it must keep working with no
+    // browser attached, and a state change should reach it immediately rather
+    // than waiting out the SSE rate limit. setState() only stores values - the
+    // actual LED I/O happens in StatusLed::tick() from loop().
+    if (statusLed != nullptr) {
+        statusLed->setState(stateOverride ? stateOverride : getStateName(), progress);
+    }
+
     if (events == nullptr) {
         return;
     }
@@ -534,15 +678,19 @@ void Runner::pushProgressEvent(bool force, const char* stateOverride) {
     }
     lastEventMillis = now;
 
-    char buffer[192];
+    char buffer[256];
     buildProgressJson(buffer, sizeof(buffer), stateOverride);
     events->send(buffer, "progress");
 }
 
-// Checkpoints are write-before-execute: called with the file offset of a line that
+// Checkpoints are write-before-execute: captured with the file offset of a line that
 // is about to run (or that recently ran, for the periodic every-N-lines case), never
 // a line that's already known complete. See runner.h's Checkpoint doc comment.
-void Runner::writeCheckpoint(uint32_t offset) {
+//
+// Capturing is separate from writing. Everything the checkpoint records is read
+// here, at the moment it comes due; the NVS write itself may happen later, once
+// the pen is up (flushCheckpointIfPenUp).
+void Runner::captureCheckpoint(uint32_t offset) {
     Movement::Point position;
     if (!movement->getCoordinates(position)) {
         // Mid-move (shouldn't normally happen here, since getNextTask() only runs
@@ -551,27 +699,69 @@ void Runner::writeCheckpoint(uint32_t offset) {
         return;
     }
 
+    pendingWrite.offset = offset;
+    pendingWrite.executedLines = executedLines;
+    pendingWrite.x = position.x;
+    pendingWrite.y = position.y;
+    pendingWrite.topDistance = movement->getTopDistance();
+    pendingWrite.penAngle = pen->getPenDistance();
+    // Whether the pen is down at this line, captured at the same instant as the
+    // position above - see beginResume()'s hand-off ordering for why this has to be
+    // restored before any resumed command line is fed. Captured rather than read at
+    // write time precisely because the write is deferred until the pen is up: asking
+    // then would record the wrong state for this line.
+    pendingWrite.penDown = pen->isDown();
+    // Multi-color (docs/multi-color.md): which pen is mounted right now.
+    // currentColorIndex defaults to 1 and palette is empty for single-color
+    // files, so this stores 1/"" for them - see Checkpoint's doc comment.
+    pendingWrite.colorIndex = currentColorIndex;
+    pendingWrite.colorName = (currentColorIndex >= 1 && currentColorIndex <= paletteCount && currentColorIndex <= maxPaletteColors)
+        ? palette[currentColorIndex - 1]
+        : String("");
+    pendingWriteValid = true;
+
+    flushCheckpointIfPenUp();
+}
+
+// Persisting to NVS blocks loop(), and so step generation, for as long as it takes -
+// usually a few milliseconds, but when the page fills the driver has to erase, and
+// that is far longer. With the pen resting on the paper and the machine stationary
+// between two tasks, that shows up as a blot. Pauses with the pen up cost nothing but
+// time, so hold the checkpoint in RAM until then.
+//
+// The cost of deferring is that a resume may re-execute back to the start of the
+// current stroke rather than to within checkpointIntervalLines of the interruption.
+// Re-drawing a whole stroke over itself is less visible than re-drawing part of one,
+// and the at-least-once guarantee is unchanged: the offset still points at a line
+// that had not finished when the checkpoint came due.
+void Runner::flushCheckpointIfPenUp() {
+    if (!pendingWriteValid || pen->isDown()) {
+        return;
+    }
+
+    unsigned long startedAt = millis();
+    writeCheckpoint(pendingWrite);
+    pendingWriteValid = false;
+
+    unsigned long tookMs = millis() - startedAt;
+    if (tookMs > maxCheckpointBlockMs) {
+        maxCheckpointBlockMs = tookMs;
+    }
+}
+
+void Runner::writeCheckpoint(const Checkpoint& checkpoint) {
     Preferences prefs;
     prefs.begin(PREFS_CKPT_NAMESPACE, false);
     prefs.putBool(PREFS_CKPT_VALID_KEY, true);
-    prefs.putUInt(PREFS_CKPT_OFFSET_KEY, offset);
-    prefs.putInt(PREFS_CKPT_EXEC_LINES_KEY, executedLines);
-    prefs.putDouble(PREFS_CKPT_X_KEY, position.x);
-    prefs.putDouble(PREFS_CKPT_Y_KEY, position.y);
-    prefs.putInt(PREFS_CKPT_TOP_DIST_KEY, movement->getTopDistance());
-    prefs.putInt(PREFS_CKPT_PEN_ANGLE_KEY, pen->getPenDistance());
-    // Whether the pen is down right now, at the same instant as the position above -
-    // see beginResume()'s hand-off ordering for why this has to be restored before
-    // any resumed command line is fed.
-    prefs.putBool(PREFS_CKPT_PEN_DOWN_KEY, pen->isDown());
-    // Multi-color (docs/multi-color.md): which pen is mounted right now.
-    // currentColorIndex defaults to 1 and palette is empty for single-color
-    // files, so this writes 1/"" for them - see Checkpoint's doc comment.
-    prefs.putInt(PREFS_CKPT_COLOR_INDEX_KEY, currentColorIndex);
-    String colorName = (currentColorIndex >= 1 && currentColorIndex <= paletteCount && currentColorIndex <= maxPaletteColors)
-        ? palette[currentColorIndex - 1]
-        : String("");
-    prefs.putString(PREFS_CKPT_COLOR_NAME_KEY, colorName);
+    prefs.putUInt(PREFS_CKPT_OFFSET_KEY, checkpoint.offset);
+    prefs.putInt(PREFS_CKPT_EXEC_LINES_KEY, checkpoint.executedLines);
+    prefs.putDouble(PREFS_CKPT_X_KEY, checkpoint.x);
+    prefs.putDouble(PREFS_CKPT_Y_KEY, checkpoint.y);
+    prefs.putInt(PREFS_CKPT_TOP_DIST_KEY, checkpoint.topDistance);
+    prefs.putInt(PREFS_CKPT_PEN_ANGLE_KEY, checkpoint.penAngle);
+    prefs.putBool(PREFS_CKPT_PEN_DOWN_KEY, checkpoint.penDown);
+    prefs.putInt(PREFS_CKPT_COLOR_INDEX_KEY, checkpoint.colorIndex);
+    prefs.putString(PREFS_CKPT_COLOR_NAME_KEY, checkpoint.colorName);
     prefs.end();
 }
 
@@ -666,11 +856,15 @@ bool Runner::beginResume(const Checkpoint& cp) {
     }
 
     auto commandsStart = openedFile.position();
-    totalLines = 0;
-    while (openedFile.available()) {
-        openedFile.readStringUntil('\n');
-        totalLines++;
-    }
+    // Same costing pass as a fresh run, but also recording how much of the plot
+    // sits before the checkpoint so progress resumes at the right percentage
+    // rather than restarting from 0.
+    PlotEstimate estimate;
+    scanPlot(Movement::Point(cp.x, cp.y), cp.offset, estimate);
+    totalLines = estimate.lines;
+    totalEstimatedSeconds = estimate.totalSeconds;
+    completedSeconds = estimate.secondsBeforeOffset;
+    pendingTaskSeconds = 0;
 
     if (cp.offset < commandsStart || cp.offset > openedFile.size()) {
         Serial.println("Resume failed: checkpoint offset out of range");

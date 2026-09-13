@@ -18,6 +18,21 @@ void DrawingPhase::pauseDrawing(AsyncWebServerRequest *request) {
     request->send(200, "text/plain", "OK");
 }
 
+// Abandon a paused plot. Requires the pause first, so the pen is already off the
+// wall and the machine has stopped cleanly, rather than cutting a stroke short.
+void DrawingPhase::cancelDrawing(AsyncWebServerRequest *request) {
+    if (!runner->isPaused()) {
+        request->send(400, "text/plain", "Pause the drawing before cancelling it");
+        return;
+    }
+    if (!runner->cancelRun()) {
+        request->send(500, "text/plain", "Could not cancel the drawing");
+        return;
+    }
+    manager->reset();
+    manager->respondWithState(request);
+}
+
 void DrawingPhase::resumeDrawing(AsyncWebServerRequest *request) {
     if (runner->isAwaitingPenSwap()) {
         // Distinct flow (docs/multi-color.md sections 2-4) - use

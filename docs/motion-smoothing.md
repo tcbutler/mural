@@ -41,23 +41,27 @@ current position to whatever target it's given - so this is a change to
   corners near the threshold will visibly get rounded off). Smaller = more
   faithful to the original path but less smoothing benefit.
 
-## Known limitation
+## Known limitation (resolved)
 
-The progress percentage shown on the OLED and pushed over `/events` during
-drawing is `executedLines / totalLines` (`Runner::run()`, `src/runner.cpp`),
-where `totalLines` is a one-time pre-scan of the command file and
-`executedLines` increments once per line actually read as a task boundary
-in `Runner::getNextTask()`. Waypoints folded into a merged task by the
-lookahead above are still consumed from the file (`openedFile.readStringUntil()`
-inside the peek loop), but that peek loop does not increment `executedLines` -
-only the line that started the merge does. So a merged run of, say, five
-collinear waypoints advances `executedLines` by one while consuming five
-lines' worth of `totalLines`. In practice this means the progress percentage
-can land noticeably under 100% by the time the file is exhausted and the
-finishing sequence kicks in - cosmetic only (progress display and the
-resume-after-power-loss checkpoint, which is keyed off the same line
-position, are unaffected in correctness), but worth knowing if the percentage
-looks like it stalls on long straight runs.
+This previously under-reported progress, because progress was
+`executedLines / totalLines` and the peek loop consumes waypoints without
+incrementing `executedLines` - a merged run of five collinear waypoints
+advanced the counter by one while eating five lines' worth of the total.
+
+Progress is now time-weighted (`completedSeconds / totalEstimatedSeconds`, see
+`Runner::computePercent`), and the per-task cost is computed *after* the merge:
+
+```cpp
+targetPosition = mergedTarget;
+...
+pendingTaskSeconds = estimateSegmentSeconds(previousTarget, targetPosition, pen->isDown());
+```
+
+So a merged task is costed by its full merged distance, and the pre-scan total
+is unaffected because merging does not change the path length (the merged
+segment runs straight between endpoints that were already nearly collinear).
+`executedLines` still under-counts, but it is now only reported alongside the
+percentage rather than being the source of it.
 
 ## Safe first test
 

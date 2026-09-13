@@ -59,20 +59,46 @@ function normalizeAngle(angle: number): number {
     return a;
 }
 
-// Cheap per-path check for whether there's anything worth following:
-// samples a handful of points across the path's bounds (corners, edge
-// midpoints, center) rather than every seed, so a genuinely flat region
-// (or a path sitting outside the source raster's data entirely) is
-// recognized and routed to the fixed-angle fallback before any streamline
-// work is attempted.
+// How many probe points per axis when asking whether a path has anything worth
+// following. Small enough to stay far cheaper than the streamline work it
+// guards, large enough to actually land on the shaded parts of a shape.
+const PROBE_GRID = 7;
+
+// Cheap per-path check for whether there's anything worth following, so a
+// genuinely flat region (or a path sitting outside the source raster's data
+// entirely) is routed to the fixed-angle fallback before any streamline work is
+// attempted.
+//
+// Probes points INSIDE the path. It used to probe nine points on the bounding
+// box - centre, corners and edge midpoints - which is fine for a rectangle and
+// misleading for anything else: on a traced horse every corner and edge midpoint
+// is the white paper around it, and the lone centre point landed on a smoothly
+// shaded flank whose local gradient is below the threshold. Nine background
+// samples and one flat one declared a richly shaded image "flat", and it
+// delegated to crossHatch45 - byte-identical output, so the strategy looked like
+// it was doing nothing at all.
 function pathHasUsableGradient(path: paper.PathItem, gradientField: GradientFieldLookup, viewSize: paper.Size): boolean {
     const bounds = path.bounds;
-    const probePoints = [
-        bounds.center,
-        bounds.topLeft, bounds.topCenter, bounds.topRight,
-        bounds.leftCenter, bounds.rightCenter,
-        bounds.bottomLeft, bounds.bottomCenter, bounds.bottomRight,
-    ];
+
+    const probePoints: paper.Point[] = [];
+    for (let row = 0; row < PROBE_GRID; row++) {
+        for (let column = 0; column < PROBE_GRID; column++) {
+            const point = new paper.Point(
+                bounds.left + (bounds.width * (column + 0.5)) / PROBE_GRID,
+                bounds.top + (bounds.height * (row + 0.5)) / PROBE_GRID,
+            );
+            if (path.contains(point)) {
+                probePoints.push(point);
+            }
+        }
+    }
+
+    // A shape too thin for any grid point to land inside it (a stroke traced as
+    // a sliver, say) still deserves to be asked, so fall back to the centre and
+    // the bounds rather than declaring it flat by default.
+    if (probePoints.length === 0) {
+        probePoints.push(bounds.center, bounds.topLeft, bounds.bottomRight);
+    }
 
     for (const point of probePoints) {
         const sample = gradientField.sampleAt(point, viewSize);
