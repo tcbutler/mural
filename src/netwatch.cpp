@@ -23,6 +23,19 @@ void NetWatch::begin(const char* hostname) {
     // between Arduino-ESP32 versions.
     WiFi.setAutoReconnect(true);
 
+    // Deliberately NOT calling WiFi.setTxPower() here. It looked like free
+    // insurance - a wall-powered machine has no reason to save milliamps at the
+    // cost of range - but measured on this board it does the opposite:
+    //
+    //   WiFi tx power: was 19.50 dBm, set(19.5) accepted, now 15.00 dBm
+    //
+    // The radio already comes up at maximum, the setter reports success, and the
+    // value read back afterwards is 4.5 dB lower - about a third of the power.
+    // Whatever the mechanism (the request is clamped against the regulatory and
+    // PHY tables rather than honoured), asking for maximum is worse than leaving
+    // it alone. getTxPowerDbm() reports it so this stays visible instead of
+    // being assumed.
+
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
         sawDisconnect = true;
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
@@ -87,6 +100,19 @@ bool NetWatch::isConnected() const {
 
 int NetWatch::getRssi() const {
     return isConnected() ? WiFi.RSSI() : 0;
+}
+
+// Arduino reports transmit power in quarter-dBm steps (wifi_power_t).
+float NetWatch::getTxPowerDbm() const {
+    return WiFi.getTxPower() / 4.0f;
+}
+
+String NetWatch::getBssid() const {
+    return isConnected() ? WiFi.BSSIDstr() : String("");
+}
+
+int NetWatch::getChannel() const {
+    return isConnected() ? WiFi.channel() : 0;
 }
 
 uint32_t NetWatch::getDownSeconds() const {

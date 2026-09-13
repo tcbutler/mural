@@ -108,6 +108,12 @@ const state = {
     freeHeap: 180000,
     largestFreeBlock: 110000,
     uptimeSeconds: 0,
+    // Radio uplink and chosen peer. --fault=weak-wifi also drops the transmit
+    // power, the asymmetry that makes a device next to its AP still transfer
+    // badly.
+    txPowerDbm: FAULTS.has('weak-wifi') ? 2 : 19.5,
+    bssid: '00:11:22:33:44:55',
+    channel: 6,
     topDistance: 1000,
     safeWidth: 600,              // firmware: 60% of pin distance
     // Movement::getHomeCoordinates: (drawableWidth / 2, HOME_Y_OFFSET_MM). Kept

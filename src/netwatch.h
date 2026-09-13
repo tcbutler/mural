@@ -33,6 +33,16 @@ class NetWatch {
     // -70 usable, -80 and below is where this machine started losing packets.
     int getRssi() const;
     uint32_t getReconnects() const { return reconnects; }
+    // Radio transmit power in dBm. Reported because RSSI cannot reveal it: RSSI
+    // is what this device HEARS from the access point, so a plotter sitting next
+    // to its AP can report a healthy RSSI while its own transmissions are too
+    // weak to be heard back - which looks exactly like the asymmetry measured
+    // here, small frames fine and large ones lost half the time.
+    float getTxPowerDbm() const;
+    // Which access point it actually associated with, and on what channel. On a
+    // mesh or extender network the nearest AP is not always the one it picked.
+    String getBssid() const;
+    int getChannel() const;
     // Seconds the link has currently been down, or 0 while connected. Lets the
     // UI say "Mural is offline" instead of just failing to load.
     uint32_t getDownSeconds() const;

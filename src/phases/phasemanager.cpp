@@ -139,6 +139,12 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     root["freeHeap"] = ESP.getFreeHeap();
     root["largestFreeBlock"] = ESP.getMaxAllocHeap();
     root["uptimeSeconds"] = millis() / 1000;
+    // Transmit power, and which AP it actually joined. RSSI only describes the
+    // downlink; these describe the uplink and the choice of peer, which is where
+    // a "close to the access point but slow" link hides.
+    root["txPowerDbm"] = netWatch->getTxPowerDbm();
+    root["bssid"] = netWatch->getBssid();
+    root["channel"] = netWatch->getChannel();
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;
