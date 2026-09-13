@@ -1,12 +1,10 @@
 import { renderCommandsToSvgJson } from "./toSvgJson";
 import { computePlacementOffset, offsetCommands } from "./placement";
 import { renderSvgJsonToCommands } from "./toCommands";
-import { GrayscaleLevelResult, vectorizeImageData, vectorizeImageDataColor, vectorizeImageDataGrayscale, withGradientField } from './vectorizer';
-import { InfillDensities, InfillDensity, RequestTypes } from "./types";
+import { vectorizeGrayscale, vectorizeImageData, vectorizeImageDataColor, withGradientField } from './vectorizer';
+import { InfillDensities, RequestTypes } from "./types";
 import { applyHueGrouping, applyHueGroupingWithOverrides } from './huePalette';
 import { estimateAndRecommend, CostEstimatorOptions } from './costEstimator';
-
-const supportedGrayscaleLevels = [3, 4];
 
 const updateStatusFn = (status: string) => {
     self.postMessage({
@@ -130,50 +128,6 @@ function vectorize(request: RequestTypes.VectorizeRequest) {
             svg: withGradientField(svgString, request.raster),
         }
     });
-}
-
-function vectorizeGrayscale(raster: ImageData, turdSize: number, requestedLevels: number): string {
-    const levels = supportedGrayscaleLevels.includes(requestedLevels) ? requestedLevels : 3;
-    const levelResults = vectorizeImageDataGrayscale(raster, turdSize, levels);
-    return combineGrayscaleLevels(levelResults, levels);
-}
-
-// Darker levels get denser infill; only the darkest (last) level keeps an
-// outline stroke, so the lighter levels' boundaries don't get hard drawn
-// edges on top of the darker regions they nest inside.
-function densityForLevel(level: number, levels: number): InfillDensity {
-    const density = Math.max(1, Math.min(4, Math.round((4 * level) / levels)));
-    return InfillDensities.includes(density as InfillDensity) ? (density as InfillDensity) : 4;
-}
-
-// The bundled Potrace tracer (tracer.js#getSVG) always emits a single, fixed
-// shape: `<svg id="svg" version="1.1" width="W" height="H" xmlns="...">` +
-// one `<path ... />` + `</svg>`. Rather than pull in a DOM parser inside the
-// worker, we rely on that fixed shape to merge each level's traced path into
-// one SVG, wrapping each in a `<g data-paper-data='...'>` so paper.js's
-// importSVG (used client-side) tags the resulting Group's `.data` with the
-// per-level density/outline override that generator.ts/infill.ts read.
-function combineGrayscaleLevels(levelResults: GrayscaleLevelResult[], levels: number): string {
-    const dimsMatch = levelResults[0].svg.match(/width="([^"]+)" height="([^"]+)"/);
-    if (!dimsMatch) {
-        throw new Error("Unexpected tracer SVG output");
-    }
-    const [, width, height] = dimsMatch;
-
-    const groups = levelResults.map(({ level, svg }) => {
-        const pathMatch = svg.match(/<path[^>]*\/>/);
-        if (!pathMatch) {
-            throw new Error("Unexpected tracer SVG output");
-        }
-
-        const density = densityForLevel(level, levels);
-        const outline = level === levels;
-        const data = JSON.stringify({ density, outline });
-
-        return `<g data-paper-data='${data}'>${pathMatch[0]}</g>`;
-    }).join('');
-
-    return `<svg id="svg" version="1.1" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${groups}</svg>`;
 }
 
 async function render(request: RequestTypes.RenderSVGRequest) {
