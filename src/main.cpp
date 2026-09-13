@@ -32,7 +32,17 @@ PhaseManager* phaseManager;
 // own Cache-Control - see the serving comment in setup(). Registered for both
 // "/" and "/index.html", since either can be the URL someone lands on.
 void sendIndex(AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/www/index.html", "text/html");
+    // build.py gzips every text asset into the image. serveStatic finds a ".gz"
+    // by itself and declares the encoding; beginResponse(fs, path) does not, so
+    // this has to do both. The uncompressed fallback keeps a hand-assembled or
+    // partially updated filesystem working.
+    AsyncWebServerResponse *response;
+    if (LittleFS.exists("/www/index.html.gz")) {
+        response = request->beginResponse(LittleFS, "/www/index.html.gz", "text/html");
+        response->addHeader("Content-Encoding", "gzip");
+    } else {
+        response = request->beginResponse(LittleFS, "/www/index.html", "text/html");
+    }
     response->addHeader("Cache-Control", "no-cache");
     request->send(response);
 }

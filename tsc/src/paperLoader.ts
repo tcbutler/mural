@@ -8,7 +8,11 @@ export function loadPaper(): paper.PaperScope {
         return paperModule;
     } else {
         if (!loaded) {
-            importScripts("https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js");
+            // Relative to the worker's own URL (/www/worker/worker.js), so this
+            // resolves to /www/vendor/paper-full.min.js - served by the plotter.
+            // This used to fetch cdnjs at runtime, which meant an image could
+            // fail to render offline long after the page itself had loaded fine.
+            importScripts("../vendor/paper-full.min.js");
             (self.paper as any as paper.PaperScope).install(self);
             loaded = true;
         }

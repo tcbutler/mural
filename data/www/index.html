@@ -5,15 +5,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mural</title>
-  <link rel="stylesheet/less" type="text/css" href="dpad.less" />
+  <link rel="stylesheet" type="text/css" href="dpad.css" />
   <link href="main.css" rel="stylesheet">
 </head>
 
 <body>
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-throttle-debounce/1.1/jquery.ba-throttle-debounce.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/less" ></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js" integrity="sha512-NApOOz1j2Dz1PKsIvg1hrXLzDFd62+J0qOPIhm8wueAnk4fQdSclq6XvfzvejDs6zibSoDC+ipl1dC66m+EoSQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- Served by the plotter, not by a CDN. A machine on a wall is reachable on
+       the LAN long before it is reachable through a working internet
+       connection, and when these came from cdnjs the page rendered as a bare
+       "Mural" link with every screen hidden. tools/check_offline.py fails the
+       build if an external reference comes back. -->
+  <script src="vendor/jquery.min.js"></script>
+  <script src="vendor/jquery.ba-throttle-debounce.min.js"></script>
+  <script src="vendor/paper-full.min.js"></script>
   <script src="modal.js" type="module"></script>
   <script src="main.js" type="module"></script>
   <div id="errorAlertContainer" style="position:fixed; top:10px; left:10px; right:10px; z-index:2000;"></div>

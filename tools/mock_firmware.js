@@ -26,6 +26,11 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const WWW = path.join(ROOT, 'data', 'www');
+// build.py folds vendor/ into the image at www/vendor/, so the device serves
+// /vendor/jquery.min.js from a directory that does not exist under data/www.
+// Mirror that here, or the mock 404s exactly the files whose whole point is that
+// the UI no longer fetches them from the internet.
+const VENDOR = path.join(ROOT, 'vendor');
 
 // --- CLI ------------------------------------------------------------------
 
@@ -613,8 +618,13 @@ const server = http.createServer(async (req, res) => {
 
     // --- Static files -----------------------------------------------------
     const rel = p === '/' ? 'index.html' : p.replace(/^\//, '');
-    const file = path.join(WWW, rel);
-    if (!file.startsWith(WWW)) { res.writeHead(403); return res.end('forbidden'); }
+    // Two roots, matching how build.py assembles the image. The device serves
+    // gzipped copies of all of these; the browser cannot tell the difference, so
+    // the mock serves the readable originals.
+    const underVendor = rel.startsWith('vendor/');
+    const root = underVendor ? VENDOR : WWW;
+    const file = path.join(root, underVendor ? rel.slice('vendor/'.length) : rel);
+    if (!file.startsWith(root)) { res.writeHead(403); return res.end('forbidden'); }
     fs.readFile(file, (err, data) => {
         if (err) {
             res.writeHead(404, { 'Content-Type': 'text/plain' });

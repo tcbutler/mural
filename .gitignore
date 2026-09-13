@@ -1,5 +1,7 @@
 .pio
 data/www/worker/*
+# Compiled from styles/dpad.less by build.py
+data/www/dpad.css
 tsc/node_modules
 tsc/package-lock.json
 tsc/dist
