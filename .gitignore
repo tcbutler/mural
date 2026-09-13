@@ -9,3 +9,5 @@ tsc/svgs/*
 tsc/out
 .DS_Store
 .vscode/c_cpp_properties.json
+__pycache__/
+*.pyc
