@@ -16,6 +16,7 @@
  *   node tools/make_style_examples.js --only gradientHatch --image images/foo.png
  *   node tools/make_style_examples.js --mode grayscale --levels 4 --image images/foo.jpg
  *   node tools/make_style_examples.js --mode color --colors 5 --image images/foo.png
+ *   node tools/make_style_examples.js --mode color --colors 6 --hue-grouping --image images/foo.png
  */
 
 const fs = require('fs');
@@ -48,6 +49,7 @@ try {
 const paper = require(path.join(ROOT, 'tsc', 'node_modules', 'paper'));
 const { vectorizeImageData, vectorizeGrayscale, vectorizeImageDataColor, withGradientField } = requireBuilt('vectorizer');
 const { renderSvgJsonToCommands } = requireBuilt('toCommands');
+const { applyHueGrouping } = requireBuilt('huePalette');
 const { FILL_STRATEGY_NAMES } = requireBuilt('fillStrategyNames');
 
 // Plot geometry for the examples. Arbitrary but fixed, so the styles are
@@ -189,9 +191,19 @@ async function main() {
         // One mask per detected colour, each becoming a pen the machine stops
         // and asks for.
         const separated = vectorizeImageDataColor(raster, TURD_SIZE, colorCount);
-        tracedSvg = separated.svg;
-        palette = separated.palette;
-        console.log(`  colour: ${palette.length} pens - ${palette.map(p => p.color || p).join(', ')}`);
+        if (process.argv.includes('--hue-grouping')) {
+            // Collapse similar hues onto one pen and render the lighter shades as
+            // sparser hatching (huePalette.ts). Two blues become one blue pen at
+            // two densities - fewer pens to own, fewer swaps to stand around for.
+            const grouped = applyHueGrouping(separated);
+            tracedSvg = grouped.svg;
+            palette = grouped.palette;
+            console.log(`  colour: ${colorCount} detected -> ${palette.length} pens after hue grouping - ${palette.map(p => p.color || p).join(', ')}`);
+        } else {
+            tracedSvg = separated.svg;
+            palette = separated.palette;
+            console.log(`  colour: ${palette.length} pens - ${palette.map(p => p.color || p).join(', ')}`);
+        }
     } else {
         tracedSvg = vectorizeImageData(raster, TURD_SIZE);
     }

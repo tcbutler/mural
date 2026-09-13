@@ -81,11 +81,22 @@ time:
 
 **Multi-colour** separates the image into one mask per pen and stops for a swap
 between them. It suits flat artwork, which is what k-means quantisation is good
-at:
+at.
 
-<img src="images/style-examples/crossHatch45-color-bluey.png" width="420" alt="Bluey characters plotted in five pen colours">
+Every extra pen is a pen you have to own and a swap you have to stand around
+for, so **hue grouping** is usually the setting you want: similar hues collapse
+onto one pen, and the lighter shades of that hue are drawn as sparser hatching
+instead of as separate inks. Two blues become one blue pen at two densities.
 
-<sub>5 pens · 1,050 strokes · 32.5 m — drawn here in the inks the machine would ask for.</sub>
+| | |
+|---|---|
+| <img src="images/style-examples/crossHatch45-color-bluey.png" width="330"><br><sub>**5 pens, no grouping** · 1,050 strokes · 32.5 m</sub> | <img src="images/style-examples/crossHatch45-hue-bluey.png" width="330"><br><sub>**6 colours detected → 3 pens** · 2,913 strokes · 48.7 m</sub> |
+
+Three pens carry it: one blue, one orange, one near-black. The tonal separation
+that five pens spent ink on is done with hatch density instead — which is why
+the grouped version reads more strongly despite using fewer inks. It costs more
+ink and time, because rendering a tint as hatching means actually drawing it
+rather than swapping to a paler pen.
 
 A caveat worth knowing before you try it on the wrong thing: run colour
 separation over a *gradient*-heavy image and pale regions tend to get quantised
@@ -99,6 +110,7 @@ Regenerate any of these with:
 node tools/make_style_examples.js                      # every style, test image
 node tools/make_style_examples.js --mode grayscale --levels 4 --image path/to.jpg
 node tools/make_style_examples.js --mode color --colors 5 --image path/to.png
+node tools/make_style_examples.js --mode color --colors 6 --hue-grouping --image path/to.png
 ```
 
 The density ladder now reaches 2.5mm spacing (was 7mm), which is what makes true mid-tones possible rather than only light tints.
