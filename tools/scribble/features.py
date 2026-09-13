@@ -38,9 +38,14 @@ def describe(rgb, luma=None):
     was producing different preprocessing decisions. A default that changes
     when you change the output size is not a default.
     """
+    if min(rgb.shape[:2]) < 3:
+        raise ValueError(
+            f"image is {rgb.shape[1]}x{rgb.shape[0]}; nothing here can shade "
+            f"something with no area. Geometry and calibration files (a single "
+            f"rule, a hairline) are not shading tests.")
     if rgb.shape[1] != ANALYSIS_WIDTH:
         from PIL import Image
-        h2 = max(1, round(rgb.shape[0] * ANALYSIS_WIDTH / rgb.shape[1]))
+        h2 = max(3, round(rgb.shape[0] * ANALYSIS_WIDTH / rgb.shape[1]))
         im = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
         rgb = np.asarray(im.resize((ANALYSIS_WIDTH, h2), Image.LANCZOS),
                          dtype=np.float64) / 255.0

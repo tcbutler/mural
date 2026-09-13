@@ -59,6 +59,10 @@ def run_auto(args):
                  else f"{val:.2f}")
         print(f"  {key:7} {shown:>11}   {reason}")
     cfg, reason = suggest(feats, args.prefer)
+    if cfg is None:
+        print(f"  {'algo':7} {'none':>11}   {reason}")
+        print("nothing written. Pass --algo explicitly to override.")
+        return 2
     print(f"  {'algo':7} {cfg['algo']:>11}   {reason}")
     print(f"  ink demand {d.mean():.3f} of the page")
 

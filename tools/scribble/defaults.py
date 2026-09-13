@@ -140,22 +140,51 @@ def preprocess(rgb, feats=None, ink_ceiling=INK_CEILING):
 
 # --- algorithm ---------------------------------------------------------
 #
-# Fitted against sweep.py over the corpus, and the honest result is that the
-# algorithm barely matters. The median gap between the best config and the
-# second best was 0.028 of composite score; always choosing the greedy walk
-# costs 0.018 on average and loses by more than 0.05 on 3 images out of 23.
-# A decision tree over image features would be fitting that noise.
+# Fitted against sweep.py, and for continuous-tone images the honest result is
+# that the algorithm barely matters. The median gap between the best config
+# and the second best is 0.030 of composite score. The best single fixed
+# choice, the greedy walk, still costs 0.048 on average and loses by more than
+# 0.05 on 10 images out of 23 - so it is the best default, not a free lunch.
+# A decision tree over image features would be fitting the noise underneath
+# those margins.
 #
 # What does change the answer is how much the plot time is worth. Scored on
-# legibility alone the greedy walk wins 21 of 23; on cost alone the TSP tour
-# wins 22 of 23, because a tour that never crosses itself lays every unit of
-# line on fresh paper and needs about 2.5x less of it for the same coverage.
-# The ranking flips between a cost weight of 0.2 and 0.3.
+# legibility alone the greedy walk wins 19 of 23; on tone alone the widest
+# cycloid wins 10; on cost alone the TSP tour wins 19, because a tour that
+# never crosses itself lays every unit of line on fresh paper and needs about
+# 2.5x less of it for the same coverage. The ranking flips between a cost
+# weight of 0.2 and 0.3.
 #
 # So the recommendation is one question, not a classifier.
 
 def suggest(feats, prefer="picture"):
-    """Recommend an algorithm. `prefer` is 'picture', 'speed', or 'texture'."""
+    """Recommend an algorithm. `prefer` is 'picture', 'speed', or 'texture'.
+
+    Returns (config, rationale). A config of None means these fills are the
+    wrong tool and the caller should say so rather than pick a least-bad one.
+    """
+    # Flat art first, because for this class the answer is "not this". A
+    # bimodal histogram with no mid-tones has nothing for a density fill to
+    # modulate: the image is regions of solid ink and regions of bare paper,
+    # which is what a hatch is for. Measured on a solid black page, the loop
+    # fills drew 5.3x and the greedy walk 3.9x the line a plain hatch at nib
+    # spacing needs for the same coverage, because they overdraw - 250 minutes
+    # against 48. The TSP tour does it in 23 minutes and simply fails to make
+    # it black, at 0.59 tone error.
+    if feats["mid_tone_fraction"] < 0.05 and feats["contrast"] < 0.05:
+        if feats["black_depth"] > 0.15:
+            return None, (
+                f"{feats['black_depth']*100:.0f}% of this image is solid ink with "
+                f"no mid-tones, so there is no density to modulate. A scribble "
+                f"fill would draw 4-5x the line a cross-hatch needs for the same "
+                f"coverage; use the renderer's hatch strategies instead")
+        # Small isolated solids on bare paper - cheap either way, and the
+        # scribble at least gives the edges some life.
+        return {"algo": "greedy", "join": 8.0}, (
+            f"flat art, but only {feats['black_depth']*100:.0f}% of it is inked, so "
+            f"the cost of overdrawing is small and the scribble reads as "
+            f"hand-drawn where a hatch would read as printed")
+
     if prefer == "speed":
         return {"algo": "tsp", "points": 20000, "break_edges": 30.0}, (
             "a non-crossing tour needs about 2.5x less line for the same "

@@ -31,19 +31,30 @@ prints why for each decision. `features.py` provides the descriptors, measured
 at a fixed analysis width - several of them are resolution-sensitive, and a
 default that changes when you change the output size is not a default.
 
-**The fitted result is that the algorithm barely matters.** Across the test
-corpus the median gap between the best config and the second best was 0.028 of
-composite score; always choosing the greedy walk costs 0.018 on average and
-loses by more than 0.05 on three images out of twenty-three. A decision tree
-over image features would be fitting that noise, so there isn't one.
+**For photographs, the algorithm barely matters.** The median gap between the
+best config and the second best is 0.030 of composite score. The best single
+fixed choice - the greedy walk - still costs 0.048 on average and loses by
+more than 0.05 on 10 images out of 23, so it is the best default rather than a
+free lunch. A decision tree over image features would be fitting the noise
+under those margins, so there isn't one.
 
 What does change the answer is what you are optimising:
 
-| objective | winner | margin |
-|---|---|---|
-| legibility alone | greedy | 21 of 23 |
-| tone alone | greedy, then cycloid | 11 and 10 of 23 |
-| plot time alone | tsp | 22 of 23 |
+| objective | winner |
+|---|---|
+| legibility alone | greedy, 19 of 23 |
+| tone alone | cycloid/12 10, greedy 8 |
+| plot time alone | tsp, 19 of 23 |
+
+**For flat art, the answer is "not these fills".** An image with no mid-tones
+is regions of solid ink and regions of bare paper, and there is no density to
+modulate. Measured on a solid black page: the loop fills drew 5.3x, and the
+greedy walk 3.9x, the line a plain hatch at nib spacing needs for the same
+coverage - 250 minutes against 48, because they overdraw. The TSP tour manages
+23 minutes by simply failing to make it black, at 0.59 tone error. `suggest`
+returns no config for that case and says to use the renderer's hatch
+strategies. Small isolated solids on bare paper are the exception: little
+enough ink that the overdraw does not matter.
 
 TSP's cheapness is real rather than an artefact of under-inking - every config
 lands within 15% of its ink budget. A tour that never crosses itself lays every
