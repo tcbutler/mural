@@ -129,42 +129,41 @@ if (!paperAvailable) {
     });
 
     // Reported as "gradient hatch does nothing": on a traced horse it produced
-    // output byte-identical to cross-hatch. The usable-gradient probe sampled
-    // nine points on the BOUNDING BOX - corners, edge midpoints, centre - which
-    // for any non-rectangular shape is mostly the background around it. Every
-    // existing test here used a rectangle filling its own bounds, so the probe
-    // always landed on the shape and the flaw stayed hidden.
-    test("gradientHatch: a shaded non-rectangular shape is not mistaken for flat", () => {
+    // output byte-identical to cross-hatch. One of the two causes was the
+    // usable-gradient probe, which sampled nine points on the BOUNDING BOX -
+    // centre, corners, edge midpoints. For any shape that is not a rectangle
+    // that is mostly the background around it, and the lone centre point can
+    // easily land somewhere smooth.
+    //
+    // The field here is a stub rather than one computed from an image, because
+    // the geometry has to be exact for this to isolate the probe: gradient ONLY
+    // in an off-centre patch inside the shape. Every one of the old nine points
+    // misses it (the corners and edge midpoints are outside the circle, and the
+    // centre is in the flat middle), while a grid of interior samples finds it.
+    // Two earlier attempts at this test - a full-frame ramp, then a radial ramp -
+    // both passed against the old probe and so proved nothing.
+    test("gradientHatch: a shape shaded away from its centre is not mistaken for flat", () => {
         const size = 200;
         paper.setup(new paper.Size(size, size));
-        // A circle: its bounding-box corners and edge midpoints all sit outside it.
-        const path = new paper.Path.Circle(new paper.Point(size / 2, size / 2), size / 2 - 20);
+        const path = new paper.Path.Circle(new paper.Point(size / 2, size / 2), size / 2 - 10);
         path.fillColor = new paper.Color("#000000");
         const view = paper.project.view;
         const boundsPath = new paper.Path.Rectangle(view.bounds);
 
-        // A full-frame ramp, so this isolates the one thing under test: whether
-        // the probe looks inside a non-rectangular path. (A hard-edged silhouette
-        // against white raises a separate question - the edge dominates the
-        // field's normalisation and can push the interior shading below the
-        // flatness threshold - which belongs in its own test, not smuggled in
-        // here.)
-        const imageData = makeImageData(size, size, (x) => {
-            const v = Math.round((x / (size - 1)) * 255);
-            return [v, v, v, 255];
-        });
-
-        const { computeGradientField, chooseSampleSpacingPx, sampleGradientField } = require("../src/imageGradient") as typeof import("../src/imageGradient");
-        const field = computeGradientField(imageData, chooseSampleSpacingPx(size, size));
+        // The only place with anything to follow: a disc up and left of centre,
+        // well inside the path and well away from every bounding-box probe point.
+        const patchCentre = new paper.Point(size * 0.32, size * 0.32);
+        const patchRadius = size * 0.12;
         const gradientFieldLookup = {
-            sampleAt(point: paper.Point, viewSize: paper.Size) {
-                return sampleGradientField(field, point.x / viewSize.width, point.y / viewSize.height);
+            sampleAt(point: paper.Point) {
+                const inPatch = point.getDistance(patchCentre) <= patchRadius;
+                return { angle: Math.PI / 3, magnitude: inPatch ? 0.6 : 0 };
             },
         };
 
         const ctx = baseCtx(view, boundsPath, gradientFieldLookup);
-        const gradientResult = gradientHatch.generateFill(path, { spacingMm: 10, minInfillLength: 3 }, ctx as any);
-        const crossHatchResult = crossHatch45.generateFill(path, { spacingMm: 10, minInfillLength: 3 }, ctx as any);
+        const gradientResult = gradientHatch.generateFill(path, { spacingMm: 8, minInfillLength: 2 }, ctx as any);
+        const crossHatchResult = crossHatch45.generateFill(path, { spacingMm: 8, minInfillLength: 2 }, ctx as any);
 
         assert.ok(gradientResult.length > 0, "expected strokes");
         assert.notStrictEqual(
@@ -172,6 +171,43 @@ if (!paperAvailable) {
             crossHatchResult.length,
             "expected gradient-following strokes, not the crossHatch45 fallback",
         );
+    });
+
+    // The other half of "gradient hatch does nothing": the field never arrived.
+    // infill.ts recovered it by walking the live paper.js project, on the stated
+    // assumption that the tagged root item stayed mounted for the whole render.
+    // Instrumented in a real render, it was not: by the time generateInfills()
+    // ran, the project held only the bounds rectangle and the tagged Group was
+    // gone, so ctx.gradientField was undefined and the strategy delegated every
+    // time.
+    //
+    // Which step drops it is NOT established - it survives generatePaths() in
+    // isolation, so a minimal reproduction here would assert something untrue.
+    // What this pins is the contract the fix depends on: the tag is readable off
+    // the imported item, which is where toCommands.ts now captures it, before
+    // anything downstream can matter.
+    test("readGradientFieldTag recovers the field from a freshly imported vectorize() SVG", () => {
+        const size = 100;
+        paper.setup(new paper.Size(size, size));
+
+        const { withGradientField } = require("../src/vectorizer") as typeof import("../src/vectorizer");
+        const { readGradientFieldTag } = require("../src/infill") as typeof import("../src/infill");
+
+        const imageData = makeImageData(size, size, (x) => {
+            const v = Math.round((x / (size - 1)) * 255);
+            return [v, v, v, 255];
+        });
+        const traced = withGradientField(
+            `<svg id="svg" version="1.1" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">` +
+            `<path d="M10 10 L90 10 L90 90 L10 90 Z" fill="#000000"/></svg>`,
+            imageData,
+        );
+
+        const imported = paper.project.importSVG(traced, { expandShapes: true, applyMatrix: true });
+        const tag = readGradientFieldTag(imported);
+
+        assert.ok(tag, "expected the gradient field on the imported item");
+        assert.ok(tag!.cols > 0 && tag!.rows > 0, "expected a populated field");
     });
 
     test("gradientHatch: falls back to crossHatch45 on a flat (uniform) raster region", () => {
