@@ -20,6 +20,7 @@ import sys
 import numpy as np
 
 from common import load_gray, render, to_svg, tone_report, pen_travel
+from contour import contour_scribble
 from cycloid import cycloid_scribble
 from greedy import greedy_scribble
 from synth import chart
@@ -30,10 +31,10 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("image", nargs="?", help="source image (omit with --chart)")
     ap.add_argument("--chart", action="store_true", help="use the synthetic tone chart")
-    ap.add_argument("--algo", choices=("cycloid", "greedy"), default="cycloid")
+    ap.add_argument("--algo", choices=("cycloid", "contour", "greedy"), default="cycloid")
     ap.add_argument("-o", "--out", default="scribble.svg")
     ap.add_argument("--width", type=int, default=760, help="working raster width in px")
-    ap.add_argument("--row", type=float, default=9.0, help="cycloid: row spacing (px)")
+    ap.add_argument("--row", type=float, default=9.0, help="cycloid/contour: line spacing (px)")
     ap.add_argument("--pen", type=float, default=1.4, help="nib width (px at working size)")
     ap.add_argument("--strokes", type=int, default=40000, help="greedy: stroke budget")
     ap.add_argument("--gamma", type=float, default=1.0, help="<1 lifts midtones")
@@ -53,6 +54,10 @@ def main(argv=None):
     if args.algo == "cycloid":
         pl = cycloid_scribble(d, row_step=args.row, pen=args.pen, seed=args.seed,
                               lift=not args.no_lift)
+        blur = args.row
+    elif args.algo == "contour":
+        pl = contour_scribble(d, gray=gray, d_sep=args.row, pen=args.pen,
+                              seed=args.seed, lift=not args.no_lift)
         blur = args.row
     else:
         pl = greedy_scribble(d, n_strokes=args.strokes, pen=args.pen, seed=args.seed)
