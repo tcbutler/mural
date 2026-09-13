@@ -59,6 +59,10 @@ def main(argv=None):
                          "photos, whose paper is never actually white")
     ap.add_argument("--black", type=float, default=None, metavar="L",
                     help="luminance (0-1) treated as solid ink")
+    ap.add_argument("--warm", type=float, default=0.0, metavar="W",
+                    help="darken warm colours by W x (red - blue). A colour "
+                         "filter, for subjects that share a luminance with "
+                         "their background but not a hue")
     ap.add_argument("--blur", type=float, default=0.0, metavar="SIGMA",
                     help="soften the source first. Needed when the source is "
                          "itself a drawing or a halftone, whose tone already "
@@ -85,7 +89,7 @@ def main(argv=None):
     if not args.chart and not args.image:
         ap.error("give an image path or --chart")
 
-    gray = chart() if args.chart else load_gray(args.image, args.width)
+    gray = chart() if args.chart else load_gray(args.image, args.width, args.warm)
     black, white = args.black, args.white
     if args.auto_levels:
         a, b = auto_levels(gray)

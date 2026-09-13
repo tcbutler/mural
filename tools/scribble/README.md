@@ -27,6 +27,16 @@ ground sat at 0.61 luminance; `--white 0.62` was the difference between mush
 and a legible image. `--auto-levels` will not save you here, because the 98th
 percentile is still well above the paper.
 
+`--warm` is for a third case, and it is the one that decides whether a photo
+works at all. A subject and its background can share a luminance while looking
+nothing alike in colour. Measured on a photo of a ginger cat against a green
+hedge: cat 0.42, hedge 0.40. Converted faithfully to grey, the cat comes out as
+a *hole* in a dark surround. Their red-minus-blue differs by more than twice
+(0.31 against 0.13), so `--warm 0.6` subtracts some of that and the cat becomes
+the dark shape it ought to be. This is the same move a black-and-white
+photographer makes by screwing a coloured filter onto the lens, and no amount
+of algorithm choice substitutes for it.
+
 `--blur` matters for a second class of source: anything whose tone is already
 dithered - a halftone, a hatched engraving, another scribble drawing. The
 loop-based fills have a characteristic cell size, and when the source's own

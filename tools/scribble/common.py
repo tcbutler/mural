@@ -3,11 +3,24 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 
-def load_gray(path, width=800):
-    im = Image.open(path).convert("L")
+def load_gray(path, width=800, warm=0.0):
+    """Load as luminance, optionally darkening warm colours.
+
+    `warm` is a colour filter, the same move a black-and-white photographer
+    makes when a subject and its background happen to share a luminance. A
+    ginger cat against a green hedge is exactly that case: measured on one
+    photo the cat read 0.42 and the hedge 0.40, so a faithful grey conversion
+    turns the cat into a hole. Their red-minus-blue differs by more than
+    twice, so subtracting some of it separates them.
+    """
+    im = Image.open(path).convert("RGB")
     h = round(im.height * width / im.width)
     im = im.resize((width, h), Image.LANCZOS)
-    return np.asarray(im, dtype=np.float64) / 255.0
+    a = np.asarray(im, dtype=np.float64) / 255.0
+    g = 0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2]
+    if warm:
+        g = g - warm * (a[..., 0] - a[..., 2])
+    return np.clip(g, 0.0, 1.0)
 
 
 def levels(gray, black=0.0, white=1.0):
