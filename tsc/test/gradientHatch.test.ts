@@ -128,6 +128,52 @@ if (!paperAvailable) {
         assert.ok(verticalCount / result.length > 0.7, `expected most strokes to be predominantly vertical, got ${verticalCount}/${result.length}`);
     });
 
+    // Reported as "gradient hatch does nothing": on a traced horse it produced
+    // output byte-identical to cross-hatch. The usable-gradient probe sampled
+    // nine points on the BOUNDING BOX - corners, edge midpoints, centre - which
+    // for any non-rectangular shape is mostly the background around it. Every
+    // existing test here used a rectangle filling its own bounds, so the probe
+    // always landed on the shape and the flaw stayed hidden.
+    test("gradientHatch: a shaded non-rectangular shape is not mistaken for flat", () => {
+        const size = 200;
+        paper.setup(new paper.Size(size, size));
+        // A circle: its bounding-box corners and edge midpoints all sit outside it.
+        const path = new paper.Path.Circle(new paper.Point(size / 2, size / 2), size / 2 - 20);
+        path.fillColor = new paper.Color("#000000");
+        const view = paper.project.view;
+        const boundsPath = new paper.Path.Rectangle(view.bounds);
+
+        // A full-frame ramp, so this isolates the one thing under test: whether
+        // the probe looks inside a non-rectangular path. (A hard-edged silhouette
+        // against white raises a separate question - the edge dominates the
+        // field's normalisation and can push the interior shading below the
+        // flatness threshold - which belongs in its own test, not smuggled in
+        // here.)
+        const imageData = makeImageData(size, size, (x) => {
+            const v = Math.round((x / (size - 1)) * 255);
+            return [v, v, v, 255];
+        });
+
+        const { computeGradientField, chooseSampleSpacingPx, sampleGradientField } = require("../src/imageGradient") as typeof import("../src/imageGradient");
+        const field = computeGradientField(imageData, chooseSampleSpacingPx(size, size));
+        const gradientFieldLookup = {
+            sampleAt(point: paper.Point, viewSize: paper.Size) {
+                return sampleGradientField(field, point.x / viewSize.width, point.y / viewSize.height);
+            },
+        };
+
+        const ctx = baseCtx(view, boundsPath, gradientFieldLookup);
+        const gradientResult = gradientHatch.generateFill(path, { spacingMm: 10, minInfillLength: 3 }, ctx as any);
+        const crossHatchResult = crossHatch45.generateFill(path, { spacingMm: 10, minInfillLength: 3 }, ctx as any);
+
+        assert.ok(gradientResult.length > 0, "expected strokes");
+        assert.notStrictEqual(
+            gradientResult.length,
+            crossHatchResult.length,
+            "expected gradient-following strokes, not the crossHatch45 fallback",
+        );
+    });
+
     test("gradientHatch: falls back to crossHatch45 on a flat (uniform) raster region", () => {
         const size = 200;
         paper.setup(new paper.Size(size, size));
