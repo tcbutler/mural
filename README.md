@@ -90,7 +90,7 @@ instead of as separate inks. Two blues become one blue pen at two densities.
 
 | | |
 |---|---|
-| <img src="images/style-examples/crossHatch45-color-bluey.png" width="330"><br><sub>**5 pens, no grouping** · 1,050 strokes · 32.5 m</sub> | <img src="images/style-examples/crossHatch45-hue-bluey.png" width="330"><br><sub>**6 colours detected → 3 pens** · 2,913 strokes · 48.7 m</sub> |
+| <img src="images/style-examples/crossHatch45-color-bluey.png" width="330"><br><sub>**5 pens, no grouping** · 962 strokes · 33.7 m</sub> | <img src="images/style-examples/crossHatch45-hue-bluey.png" width="330"><br><sub>**6 colours detected → 3 pens** · 2,934 strokes · 46.8 m</sub> |
 
 Three pens carry it: one blue, one orange, one near-black. The tonal separation
 that five pens spent ink on is done with hatch density instead — which is why
@@ -112,6 +112,16 @@ those are the shadow, which is a large enough mass of tone to claim a pen on
 merit. Asking for *more* pens makes it worse rather than better — at six, the
 extra pens go to a second and third shade of grey and both the blue disc and the
 green ramp drop out.
+
+The same thing shows up in the Bluey renders as a faint ragged oval around the
+family, which isn't obvious in the source: it's a soft blue halo that ramps from
+invisible up to about 23% opacity. Compositing over white removes 99% of it, but
+the denser inner part reaches a colour distance of 0.08 from paper — three times
+further than a legitimately pale cream ink at 0.0255 — so no "too pale to draw"
+rule can remove it without removing real content too. Anything with tone in it
+gets drawn, because a pen has no way to draw 5% of a colour. Hue grouping handles
+it more gracefully than flat separation does, rendering it as sparse hatching
+rather than an outline.
 
 So: flat art with distinct hues separates cleanly. Art with large soft shadows or
 broad pale washes spends pens on tone, and hue grouping (above) is the better

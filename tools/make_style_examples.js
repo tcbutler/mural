@@ -78,10 +78,12 @@ async function loadRaster(imagePath) {
     const height = Math.max(1, Math.round(image.height * scale));
     const surface = canvasModule.createCanvas(width, height);
     const context = surface.getContext('2d');
-    // The paper is white, so that is what any transparency is seen against -
-    // the same compositing the tracer does (see grayscale.ts).
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, width, height);
+    // Deliberately NOT flattened onto white first. The web UI rasterises onto a
+    // transparent canvas, so the pipeline receives real alpha and does its own
+    // compositing (grayscale.ts, and vectorizer.ts for the colour path). Filling
+    // white here would hand it fully opaque pixels and hide the difference that
+    // compositing makes - the gallery would show a worse result than the machine
+    // actually produces.
     context.drawImage(image, 0, 0, width, height);
     return context.getImageData(0, 0, width, height);
 }

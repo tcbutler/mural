@@ -63,6 +63,11 @@ const BACKGROUND_INDEX = -1;
 // a gradient backdrop and JPEG compression noise without also catching
 // genuinely pale ink colors, so background is treated as just another
 // distance-based candidate everywhere, exactly like a palette entry.
+// Floor on the confident radius, as a squared RGB distance. ~0.0025 is a radius
+// of about 13 RGB units - comfortably inside any real palette gap, and enough
+// that a pixel sitting on its own colour is still recognised as that colour.
+const MIN_CONFIDENT_THRESHOLD = 0.0025;
+
 function computeConfidentThreshold(colors: paper.Color[]): number {
     let minPairwiseDistSq = Infinity;
     for (let i = 0; i < colors.length; i++) {
@@ -71,7 +76,23 @@ function computeConfidentThreshold(colors: paper.Color[]): number {
             if (d < minPairwiseDistSq) minPairwiseDistSq = d;
         }
     }
-    return isFinite(minPairwiseDistSq) ? minPairwiseDistSq / 8 : 0;
+    if (!isFinite(minPairwiseDistSq)) {
+        return 0;
+    }
+
+    // The radius is a fraction of the CLOSEST pair, which makes the whole image's
+    // confidence hostage to the two most similar references. One near-white
+    // palette entry sitting close to the white background reference collapses it
+    // towards zero, and then nothing anywhere is confident - every pixel becomes
+    // fringe, to be resolved by neighbour vote from confident pixels that do not
+    // exist. Observed on the MURAL2.0 image: a whole saturated yellow circle
+    // classified away to nothing while its cluster still held 168,693 samples.
+    //
+    // The floor keeps a usable radius when two references crowd each other. It
+    // can only make classification MORE willing to label a pixel by its own
+    // nearest colour, which is the behaviour the fringe machinery exists to
+    // refine, not to replace.
+    return Math.max(minPairwiseDistSq / 8, MIN_CONFIDENT_THRESHOLD);
 }
 
 // Background tolerance used only to pre-filter which pixels feed
@@ -103,6 +124,30 @@ function computeConfidentThreshold(colors: paper.Color[]): number {
 // isn't a delicate choice, and comfortably covers antialiasing/compression
 // noise (a handful of RGB units of drift) without reaching real content.
 const BACKGROUND_TOLERANCE = 0.003;
+
+
+// Composites a pixel over white paper, which is what the machine draws on.
+//
+// The colour path judged pixels by the colour they STORE, ignoring alpha except
+// for the fully-transparent case - so a 3%-opacity shadow was matched against
+// the palette as though it were the solid dark blue-grey it stores. That is
+// where the large ragged oval across the ground in Bluey's colour renders came
+// from: it is a shadow ellipse nobody can see in the source. Measured alpha,
+// median: 8 for that oval, 52 for the small drop shadows under each character
+// which ARE visible, 255 for the characters themselves. Compositing separates
+// them without needing a new threshold - the oval lands within the existing
+// near-white background tolerance, the real shadows do not.
+//
+// The grayscale path has composited since the transparency fix; this brings the
+// colour path into line with it.
+function compositeOverWhite(r255: number, g255: number, b255: number, a255: number): { r: number, g: number, b: number } {
+    const opacity = a255 / 255;
+    return {
+        r: (r255 / 255) * opacity + (1 - opacity),
+        g: (g255 / 255) * opacity + (1 - opacity),
+        b: (b255 / 255) * opacity + (1 - opacity),
+    };
+}
 
 function isBackgroundPixel(color: paper.Color): boolean {
     return color.alpha === 0 || colorDistance(color, WHITE_COLOR) < BACKGROUND_TOLERANCE;
@@ -218,9 +263,10 @@ export function classifyWithFringeResolution(imageData: ImageData, paletteColors
             continue;
         }
         opaqueCount++;
-        const r = data[address] / 255;
-        const g = data[address + 1] / 255;
-        const b = data[address + 2] / 255;
+        const composited = compositeOverWhite(data[address], data[address + 1], data[address + 2], a);
+        const r = composited.r;
+        const g = composited.g;
+        const b = composited.b;
 
         let bestExtIndex = 0;
         let bestDist = Infinity;
@@ -441,7 +487,12 @@ function kMeansQuantize(imageData: ImageData, k: number): { indices: Int16Array,
         const g = imageData.data[address + 1];
         const b = imageData.data[address + 2];
         const a = imageData.data[address + 3];
-        const color = new paper.Color(r / 255, g / 255, b / 255, a / 255);
+        if (a === 0) {
+            indices[i] = BACKGROUND_INDEX;
+            continue;
+        }
+        const composited = compositeOverWhite(r, g, b, a);
+        const color = new paper.Color(composited.r, composited.g, composited.b);
         if (isBackgroundPixel(color)) {
             indices[i] = BACKGROUND_INDEX;
             continue;
