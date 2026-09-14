@@ -536,6 +536,63 @@ async function checkIfExtendedToHome(extendToHomeTime) {
     }
 }
 
+
+// --- The original, alongside the drawing ------------------------------------
+//
+// svgControl keeps #sourceSvg up to date with the transformed source (target
+// size, pan and zoom applied), which is exactly what the drawing was made from -
+// so it is the right thing to compare a render against, not the untransformed
+// upload. Mirrored here into the preview screen's thumbnail, its full-size
+// modal, and the faded copy that can sit behind the drawing.
+function syncOriginalPreview() {
+    const source = document.getElementById('sourceSvg');
+    const url = source ? source.getAttribute('src') : null;
+
+    if (!url) {
+        $("#sourceRow").hide();
+        $("#previewGhost").hide().removeAttr('src');
+        return;
+    }
+
+    $("#sourceThumb").attr('src', url);
+    $("#originalFull").attr('src', url);
+    $("#previewGhost").attr('src', url);
+    $("#sourceRow").show();
+    applyOriginalOverlay();
+}
+
+// The faded original is only useful once there is a drawing to compare it
+// against; on its own it just looks like a broken preview. It is also hidden
+// while the preview is enlarged: previewZoom.js pans and scales #previewSvg with
+// a CSS transform that a sibling does not follow, so the two would drift apart
+// exactly when someone is looking closely.
+function applyOriginalOverlay() {
+    const wanted = $("#overlayOriginalToggle").is(":checked");
+    const haveRender = !!$("#previewSvg").attr('src');
+    const enlarged = $("#previewZoomToggle").is(":checked");
+    const show = wanted && haveRender && !enlarged;
+    $("#previewGhost").toggle(show);
+    $("#previewFrame").toggleClass('overlay-on', show);
+    if (show) {
+        positionOriginalOverlay();
+    }
+}
+
+// Puts the faded original exactly where the drawing is. Measured rather than
+// expressed in CSS because the drawing's box depends on its aspect ratio, which
+// changes with the image.
+function positionOriginalOverlay() {
+    const preview = document.getElementById('previewSvg');
+    const ghost = document.getElementById('previewGhost');
+    if (!preview || !ghost || !preview.offsetParent) {
+        return;
+    }
+    ghost.style.left = preview.offsetLeft + 'px';
+    ghost.style.top = preview.offsetTop + 'px';
+    ghost.style.width = preview.offsetWidth + 'px';
+    ghost.style.height = preview.offsetHeight + 'px';
+}
+
 function init() {
     function doneWithPhase(custom) {
         $(".muralSlide").hide();
@@ -1041,6 +1098,7 @@ function init() {
 
                 hideRenderOverlay();
                 $("#previewSvg").attr("src", resultDataUrl);
+                syncOriginalPreview();
                 $("#distances").text(`Total: ${totalDistanceM}m / Draw: ${drawDistanceM}m`);
                 $(".svg-preview").show();
                 hasRenderedOnce = true;
@@ -1139,6 +1197,15 @@ function init() {
         $("#hueGroupingOptions").toggle($(this).is(":checked"));
     });
 
+    $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
+    // The drawing's box changes with the window and when the preview is
+    // enlarged or closed; the overlay has to follow it.
+    $("#previewZoomToggle").on('change', applyOriginalOverlay);
+    $(window).on('resize', applyOriginalOverlay);
+    // A newly rendered preview can change aspect ratio, and its layout is only
+    // final once the image has decoded.
+    $("#previewSvg").on('load', applyOriginalOverlay);
+
     $("#updatePreviewBtn").click(async function() {
         await rendererFn();
     });
@@ -1203,6 +1270,8 @@ function init() {
         hasRenderedOnce = false;
         updatePreviewStatusUI();
         $("#previewSvg").removeAttr("src");
+        $("#previewGhost").hide().removeAttr("src");
+        $("#sourceRow").hide();
         $(".svg-preview").hide();
         $("#acceptSvg").attr("disabled", "disabled");
         renderLayerBreakdown(null);

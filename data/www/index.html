@@ -132,8 +132,8 @@
       </div>
       <div id="svgUploadSlide" class="muralSlide" style="display:none;">
         <div class="ui-topbar"><span class="eyebrow">Setup</span></div>
-        <h3 class="mb-2 fw-normal">Select SVG image</h3>
-        <h6 class="mb-2"><small class="text-muted">Use black and white line art SVGs for now.</small></h6>
+        <h3 class="mb-2 fw-normal">Choose an image</h3>
+        <h6 class="mb-2"><small class="text-muted">Line art traces most cleanly, but photos work too - pick a fill style and tonal mode on the next screen.</small></h6>
         <img id="sourceSvg" class="img-thumbnail mb-2 svg-control" style="display:none;width:100%;">
         <div class="container svg-control mb-2" style="display: none;" id="targetSizeControl">
           <div class="control-label-row">
@@ -190,7 +190,7 @@
             <h6><small class="text-muted" id="transformText"></small></h6>
           </div>
         </div>
-        <h6 class="mb-2"><small class="text-muted">Upload an SVG drawing, or a photo (JPEG, PNG, WebP)</small></h6>
+        <h6 class="mb-2"><small class="text-muted">SVG, JPEG, PNG or WebP</small></h6>
         <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
         <button class="w-100 btn btn-lg btn-primary mb-6" id="preview" disabled>Preview drawing</button>
         <button class="w-100 btn btn-lg btn-outline-secondary mb-5" id="installTestPatternButton">Draw calibration test pattern</button>
@@ -235,6 +235,12 @@
             <div class="preview-box">
               <input type="checkbox" id="previewZoomToggle" class="zoom-toggle">
               <div class="preview-frame" id="previewFrame">
+                <!-- The original, underneath the drawing and faded right back, so
+                     the two can be compared directly. Both are contained in the
+                     same box at the same aspect, so they register without any
+                     alignment maths. Hidden unless the overlay is switched on;
+                     never a pointer target, so it cannot swallow zoom gestures. -->
+                <img id="previewGhost" class="preview-ghost" alt="" style="display:none;">
                 <img id="previewSvg" class="svg-preview" style="display:none;">
                 <!-- Render-in-flight overlay (over the preview, not a small bar
                      below it - see main.js's showRenderOverlay/updateRenderStage/
@@ -257,6 +263,22 @@
               </div>
               <label for="previewZoomToggle" class="zoom-close">&#10005; Close</label>
             </div>
+            <!-- What the drawing is OF. Tweaking fill, density and colour a few
+                 times is enough to lose track of the original, and it is two
+                 screens back. -->
+            <div class="source-row" id="sourceRow" style="display:none;">
+              <button type="button" class="source-thumb" id="sourceThumbBtn" data-modal-target="originalModal" title="Show the original full size">
+                <img id="sourceThumb" alt="The original image">
+              </button>
+              <div class="source-row-text">
+                <div class="source-row-title">Original</div>
+                <label class="source-overlay-switch">
+                  <input type="checkbox" id="overlayOriginalToggle">
+                  <span>Show behind the drawing</span>
+                </label>
+              </div>
+            </div>
+
             <!-- Explicit update flow (task 2): a settings change marks the
                  preview dirty instead of auto re-rendering; this row surfaces
                  that state and the button that actually kicks off a render. -->
@@ -522,6 +544,21 @@
       </div>
       <div class="mt-5"><a href="https://github.com/nikivanov/mural" class="link-primary">Mural</a></div>
   </main>
+  <!-- The original at full size. The preview screen only has room for a
+       thumbnail, and a thumbnail is not enough to check whether a face or a
+       piece of lettering survived the trace. -->
+  <dialog class="mural-modal" id="originalModal" aria-labelledby="originalModalLabel">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="originalModalLabel">Original image</h5>
+        <button type="button" class="btn-close" data-modal-dismiss aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <img id="originalFull" class="original-full" alt="The original image at full size">
+      </div>
+    </div>
+  </dialog>
+
   <dialog class="mural-modal" id="toolsModal" aria-labelledby="toolsModalLabel">
     <div class="modal-content">
       <div class="modal-header">

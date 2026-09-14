@@ -1378,3 +1378,88 @@ dialog.mural-modal::backdrop {
 @media (min-width: 900px) {
   #errorAlertContainer { max-width: 620px; }
 }
+
+/* --- The original, alongside the drawing -----------------------------------
+ *
+ * Tweaking fill style, density and colour a few times is enough to lose track
+ * of what the image was, and the source screen is two steps back. A thumbnail
+ * here answers "what am I looking at" without leaving the preview.
+ */
+.source-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0 4px;
+}
+
+.source-thumb {
+    flex: 0 0 auto;
+    width: 76px;
+    height: 76px;
+    padding: 3px;
+    background: #fff;
+    border: 1px solid var(--rule, #d8d8d8);
+    border-radius: 4px;
+    cursor: zoom-in;
+    line-height: 0;
+}
+
+.source-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.source-row-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.source-overlay-switch {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.original-full {
+    display: block;
+    width: 100%;
+    height: auto;
+    /* A transparent PNG against the modal's own surface reads as whatever is
+       behind it; on white it looks like the paper will. */
+    background: #fff;
+}
+
+/* The original behind the drawing. Positioned by the same rules as the preview
+ * image inside .preview-frame, so the two register without alignment maths -
+ * both are contained in the same box and share the artwork's aspect ratio.
+ *
+ * Faded hard: this is a reference for where things sit, not a second picture
+ * competing with the strokes. Never a pointer target, or it would swallow the
+ * pinch and drag gestures that belong to the preview.
+ */
+/* The rendered preview is an opaque white PNG, so a picture behind it is simply
+ * covered - at any opacity. Multiplying the drawing over the original makes its
+ * white transparent while leaving the strokes black, which is what puts the two
+ * in the same space. Applied only while the overlay is on, so the normal preview
+ * is untouched. */
+.preview-frame.overlay-on .svg-preview {
+    mix-blend-mode: multiply;
+}
+
+.preview-ghost {
+    /* Box set in JS to the drawing's own box, not inset:0 on the frame. The
+       frame is taller and wider than the image it holds (529x474 against
+       513x293 when this was measured), so filling it and relying on
+       object-fit:contain leaves the two pictures centred in different
+       rectangles and out of register by ~86px vertically. */
+    position: absolute;
+    object-fit: contain;
+    opacity: 0.22;
+    pointer-events: none;
+}
