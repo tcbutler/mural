@@ -20,6 +20,35 @@ line work, and a wordmark knocked out of a shadowed band.
 
 ---
 
+## Before the marks: what the image even is
+
+Every control below decides how to draw the image. Two decide what the image
+is, and they sit above the rest in the preview because a photograph can defeat
+the whole pipeline no matter which fill style it gets. Both rest at a no-op and
+both are recommended per image, with the reason shown underneath.
+
+**Paper brightness** is the brightness that counts as bare paper. A photograph
+of a page has no true white in it: metered for the room, the paper comes back a
+mid grey, and the tracer then inks the entire background. On a photo of a pen
+drawing on canvas, the brightest real tone measured 87% — at the lightest of
+three tonal levels, that was 89% of the frame going to ink, against 69% once
+the white point was set to what the paper actually measures.
+
+**Colour filter** darkens warm colours against cool ones before the image is
+reduced to tone, the way a coloured lens filter does for black-and-white film.
+A subject and its background can share a brightness and look nothing alike: on
+a photo of a ginger cat against a green hedge, the cat read 0.42 and the hedge
+0.40, so a faithful grey conversion turned the cat into a hole in a dark
+surround. Their red-minus-blue differed by more than twice. No fill style
+recovers that — the information has already left the channel. The strength
+(0.6) was picked by blind comparison of the same photo at 0, 0.3 and 0.6.
+
+It is dropped on the multi-colour path, and the control goes with it: that path
+separates *by* hue and still has the colour, so the filter would only flatten
+what is about to be drawn.
+
+---
+
 ## The eight fill styles
 
 The original cross-hatch plus seven new ones, all on the same image at 400 × 229 mm

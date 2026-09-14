@@ -93,6 +93,7 @@ if (!paperAvailable) {
         vectorizeImageDataGrayscale,
     } = require("../src/vectorizer") as typeof import("../src/vectorizer");
     const { applyHueGrouping, computeToneSpacingMm } = require("../src/huePalette") as typeof import("../src/huePalette");
+    const { needsPreparation, preparationFor, prepareTone } = require("../src/tonePreparation") as typeof import("../src/tonePreparation");
 
     const noopStatus = () => {};
 
@@ -668,5 +669,96 @@ if (!paperAvailable) {
         const heavier = computeToneSpacingMm(0.5, 0.1, { inkMultiplier: 2.0 });
         assert.notStrictEqual(neutral, heavier, "inkMultiplier should change computed hatch spacing");
         assert.ok(heavier < neutral, "a higher ink multiplier implies more coverage per pass, so spacing should tighten");
+    });
+
+    // whitePoint and warmth are applied by main.ts's vectorize() before it
+    // calls any tracer, so what follows mirrors that call order rather than
+    // passing the option to a tracer that has never heard of it:
+    // preparationFor -> prepareTone -> trace. tonePreparation.test.ts covers
+    // the arithmetic; these cover that the option reaches the traced output.
+
+    function flatRaster(width: number, height: number, fill: (x: number, y: number) => [number, number, number]): ImageData {
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const [r, g, b] = fill(x, y);
+                const i = (y * width + x) * 4;
+                data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+            }
+        }
+        return { data, width, height, colorSpace: "srgb" } as unknown as ImageData;
+    }
+
+    function prepared(raster: ImageData, request: { whitePoint?: number; warmth?: number; colorCount?: number }): ImageData {
+        const prep = preparationFor(request);
+        return needsPreparation(prep) ? prepareTone(raster, prep) : raster;
+    }
+
+    function traceWithPreparation(raster: ImageData, request: { whitePoint?: number; warmth?: number; colorCount?: number }): string {
+        return vectorizeImageData(prepared(raster, request), 0);
+    }
+
+    // Area of paper a traced SVG would ink. Subpath counting, which the
+    // turdSize tests above use, cannot tell "the subject" from "the whole
+    // frame" - both are one region - and that is exactly the difference
+    // these two options make.
+    function inkedArea(svg: string): number {
+        const probeSize = new paper.Size(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+        paper.setup(probeSize);
+        const imported = paper.project.importSVG(svg, { expandShapes: true, applyMatrix: true });
+        let area = 0;
+        imported.getItems({ class: paper.Path }).forEach((item: paper.Item) => {
+            area += Math.abs((item as paper.Path).area);
+        });
+        paper.project.remove();
+        return Math.round(area);
+    }
+
+    test("PART D / whitePoint: a photographed grey paper traces as ink without one, and as bare paper with one", () => {
+        // A dim background (65% luminance, about what a page meters at
+        // indoors) around a genuinely dark subject - the case the option
+        // exists for. The whole 40x40 frame is 1600 units of paper; the
+        // subject is 256 of them.
+        const raster = flatRaster(40, 40, (x, y) => {
+            const inSubject = x >= 12 && x < 28 && y >= 12 && y < 28;
+            return inSubject ? [20, 20, 20] : [166, 166, 166];
+        });
+
+        const untreated = inkedArea(traceWithPreparation(raster, {}));
+        const lifted = inkedArea(traceWithPreparation(raster, { whitePoint: 0.65 }));
+
+        assert.strictEqual(untreated, 1600, "without a white point the grey background is ink too, so the whole frame traces");
+        assert.strictEqual(lifted, 256, "with one, only the subject is left and the background stays bare paper");
+    });
+
+    test("PART D / warmth: separates two colours a plain grey conversion flattens together", () => {
+        // Matched luminance, opposed hue - a warm subject on a cool ground,
+        // the ginger-cat-against-a-hedge case. Traced as tonal bands, since
+        // that is the path that reduces the image to tone and so the path the
+        // filter exists for.
+        const warm: [number, number, number] = [178, 120, 74];
+        const cool: [number, number, number] = [96, 143, 148];
+        const raster = flatRaster(40, 40, (x, y) => {
+            const inSubject = x >= 12 && x < 28 && y >= 12 && y < 28;
+            return inSubject ? warm : cool;
+        });
+
+        const areasByLevel = (warmth?: number) =>
+            vectorizeImageDataGrayscale(prepared(raster, { warmth }), 0, 3).map(level => inkedArea(level.svg));
+
+        assert.deepStrictEqual(areasByLevel(), [1600, 0, 0],
+            "grey alone puts subject and ground in the same band, so the subject disappears into it");
+        assert.deepStrictEqual(areasByLevel(0.6), [1600, 256, 0],
+            "the filter darkens the warm subject into a band of its own");
+    });
+
+    test("PART D / warmth: dropped on the colour path, where the separation still has the hue", () => {
+        const raster = flatRaster(20, 20, (x) => (x < 10 ? [178, 120, 74] : [96, 143, 148]));
+
+        const asked = traceWithPreparation(raster, { warmth: 0.6, colorCount: 3 });
+        const never = traceWithPreparation(raster, { colorCount: 3 });
+
+        assert.strictEqual(asked, never,
+            "a colour separation separates BY hue, so the filter is dropped rather than flattening what is about to be drawn");
     });
 }

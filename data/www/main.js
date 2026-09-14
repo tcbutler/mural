@@ -754,7 +754,7 @@ function init() {
         hasRenderedOnce = false;
         updatePreviewStatusUI();
         $("#processingEstimateText,#processingWarning,#plottingEstimateSummary").hide().empty();
-        $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale").hide();
+        $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale,#whitePointRationale,#warmthRationale").hide();
 
         // An undecodable photo or a malformed SVG must not leave the input
         // naming a file that never loaded, or the render paths' presence check
@@ -785,6 +785,9 @@ function init() {
             $(".svg-control").hide();
             $("#infillDensity").val(0);
             $("#turdSize").val(2);
+            $("#whitePoint").val(1);
+            $("#warmth").val(0);
+            updateToneReadouts();
             $("#fillMethod").val("crossHatch45");
             setColorMode('single');
             $("#grayscaleLevels").val(3);
@@ -918,6 +921,13 @@ function init() {
             type: 'vectorize',
             raster,
             turdSize: getTurdSize(),
+            // Tone preparation, applied to the raster before any of the modes
+            // below see it - see getWhitePoint/getWarmth. The worker drops
+            // warmth itself on the colour path (tonePreparation.ts's
+            // preparationFor), so this sends what the user chose and lets the
+            // one rule live in one place.
+            whitePoint: getWhitePoint(),
+            warmth: getWarmth(),
             grayscaleLevels: getGrayscaleLevels(),
             // Multi-color raster separation (docs/multi-color.md section 1):
             // colorCount>=2 triggers k-means clustering (no fixed palette -
@@ -1142,9 +1152,9 @@ function init() {
         worker.postMessage(renderRequest);
     }
 
-    const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox'];
+    const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox', 'whitePoint', 'warmth'];
 
-    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod";
+    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth";
 
     $(SETTINGS_CONTROL_SELECTOR).on('input change', function() {
         // A control the smart defaults may have pre-set was just changed by
@@ -1191,11 +1201,14 @@ function init() {
         const mode = getColorMode();
         $("#grayscaleOptions").toggle(mode === 'grayscale');
         $("#multiColorOptions").toggle(mode === 'multi');
+        $("#warmthControl").toggle(mode !== 'multi');
     });
 
     $("#hueGroupingCheckbox").on('change', function() {
         $("#hueGroupingOptions").toggle($(this).is(":checked"));
     });
+
+    $("#whitePoint,#warmth").on('input change', updateToneReadouts);
 
     $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
     // The drawing's box changes with the window and when the preview is
@@ -1229,6 +1242,9 @@ function init() {
 
     $("#pathTracing").click(async function() {
         $("label[for='turdSize'],#turdSize").hide();
+        // A vector SVG has no photographed paper to lift and no colour the
+        // tracer is about to throw away, so neither tone control applies.
+        $("#toneControls").hide();
         $("#colorModeGrayscaleOption").hide();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").show();
 
@@ -1250,6 +1266,7 @@ function init() {
         }
         $("#grayscaleLevels").val(3);
         $("label[for='turdSize'],#turdSize").show();
+        $("#toneControls").show();
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2231,6 +2248,33 @@ function getTurdSize() {
     return parseInt($("#turdSize").val());
 }
 
+// Tone preparation (tsc/src/tonePreparation.ts): what the pipeline draws
+// FROM, decided before anything quantizes or traces. Both read as undefined
+// at their resting values rather than as 1 and 0, so a render that wants
+// neither sends neither and the worker's needsPreparation() check skips the
+// copy entirely - an image nobody has touched these for traces exactly as it
+// did before they existed.
+function getWhitePoint() {
+    const value = parseFloat($("#whitePoint").val());
+    return Number.isFinite(value) && value < 1 ? value : undefined;
+}
+
+function getWarmth() {
+    const value = parseFloat($("#warmth").val());
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+// Both sliders carry their value in their own label. The rationale underneath
+// explains the recommendation, but it goes stale the moment the user drags,
+// and "what did I just set it to" is the question a percentage answers.
+function updateToneReadouts() {
+    const whitePoint = parseFloat($("#whitePoint").val());
+    $("#whitePointValue").text(Number.isFinite(whitePoint) ? `${Math.round(whitePoint * 100)}%` : '');
+
+    const warmth = parseFloat($("#warmth").val());
+    $("#warmthValue").text(!Number.isFinite(warmth) || warmth <= 0 ? 'off' : `${Math.round(warmth * 100)}%`);
+}
+
 // Request-level default fill strategy (RenderSVGRequest.fillMethod,
 // tsc/src/types.ts) - see the #fillMethod <select>'s options for the
 // registered strategy names (fillStrategies/registry.ts). The worker's
@@ -2255,6 +2299,10 @@ function setColorMode(mode) {
     $(`input[name='colorMode'][value='${mode}']`).prop("checked", true);
     $("#grayscaleOptions").toggle(mode === 'grayscale');
     $("#multiColorOptions").toggle(mode === 'multi');
+    // Warmth is dropped by the worker on the colour path (see #warmthControl
+    // in index.html), so the control goes with it rather than sitting there
+    // doing nothing.
+    $("#warmthControl").toggle(mode !== 'multi');
 }
 
 function getGrayscaleLevels() {
@@ -2378,6 +2426,14 @@ function applySmartDefaults(recommendations) {
 
     $("#colorCount").val(clampColorCountOption(recommendations.colorCount.value));
     showRationale('#colorCountRationale', recommendations.colorCount.rationale);
+
+    $("#whitePoint").val(recommendations.whitePoint.value);
+    showRationale('#whitePointRationale', recommendations.whitePoint.rationale);
+
+    $("#warmth").val(recommendations.warmth.value);
+    showRationale('#warmthRationale', recommendations.warmth.rationale);
+
+    updateToneReadouts();
 
     $("#hueGroupingCheckbox").prop("checked", recommendations.hueGrouping.value);
     $("#hueGroupingOptions").toggle(recommendations.hueGrouping.value);
