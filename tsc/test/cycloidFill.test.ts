@@ -146,9 +146,32 @@ if ("error" in paperLoadResult) {
     });
 
     test("coverage is matched to the default cross-hatch, not to a single pass", () => {
-        // Two passes of a 1.2mm nib per 12mm of spacing.
-        assert.ok(Math.abs(coverageForSpacing(12, 1.2) - 0.2) < 1e-9);
+        // Two passes of a 1.2mm nib per 12mm of spacing is 0.2 of ink LENGTH
+        // per unit area, which inks 1 - exp(-0.2) of the paper - the number
+        // the tonal model takes. Handing it the 0.2 directly is the bug this
+        // pins: harmless here, three times the ink at the dense end.
+        const inkLength = 0.2;
+        assert.ok(Math.abs(coverageForSpacing(12, 1.2) - (1 - Math.exp(-inkLength))) < 1e-9);
         // And it cannot ask for more ink than there is paper.
         assert.ok(coverageForSpacing(1, 1.2) <= 0.95);
+    });
+
+    test("the ink cost per row matches the default cross-hatch at every density", () => {
+        // What "the same ink as the default, arranged differently" has to
+        // mean: a row of loops lays the same length of ink as the two hatch
+        // passes it stands in for, whatever the spacing. Measured off the
+        // traced geometry rather than off the model that produced it.
+        for (const spacingMm of [20, 10, 5, 2.5]) {
+            const paths = cycloid.generateFill(
+                new paper.Path.Rectangle(new paper.Rectangle(0, 0, 400, 400)),
+                { spacingMm, minInfillLength: 0.5 }, makeContext());
+            const rows = Math.floor(400 / spacingMm);
+            const inkPerRowMm = totalLength(paths) / rows;
+
+            // Two passes of a 1.2mm nib across a 400mm row.
+            const crossHatchInkMm = 2 * 400;
+            assert.ok(Math.abs(inkPerRowMm - crossHatchInkMm) / crossHatchInkMm < 0.15,
+                `at ${spacingMm}mm spacing a row laid ${inkPerRowMm.toFixed(0)}mm against cross-hatch's ${crossHatchInkMm}`);
+        }
     });
 }

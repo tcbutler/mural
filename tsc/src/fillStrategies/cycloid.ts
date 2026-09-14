@@ -54,7 +54,9 @@ const paper = loadPaper();
 // one is offered as an alternative to. See the header.
 const PASSES_PER_SPACING = 2;
 
-// Ink cannot exceed the paper.
+// Ink cannot exceed the paper. With the conversion below this only binds for
+// a spacing finer than the ladder ever asks for, but a coverage of exactly 1
+// would send the tonal model's -ln(1 - c) to infinity, so it stays.
 const MAX_COVERAGE = 0.95;
 
 // Seeded for the same reason jitteredHatch is: re-running an identical request
@@ -72,7 +74,22 @@ const JITTER_FRACTION_OF_SPACING = 0.09;
 
 export function coverageForSpacing(spacingMm: number, nibWidthMm: number): number {
     if (!(spacingMm > 0)) return 0;
-    return Math.min(MAX_COVERAGE, (PASSES_PER_SPACING * nibWidthMm) / spacingMm);
+
+    // Passes per spacing is a LENGTH of ink per unit of paper - two nib widths
+    // laid across every spacing - and the tonal model in cycloidPath.ts takes
+    // a real ink COVERAGE, which is not the same number. Ink landing on ink
+    // covers no new paper, so a length of L per unit area shows up as
+    // 1 - exp(-L) of the paper actually inked.
+    //
+    // Handing the length over as though it were a coverage is a quiet mistake
+    // at the sparse end of the ladder, where the two nearly agree (0.12
+    // against 0.113), and a serious one at the dense end, where the model then
+    // solves for the length that would really ink 96% of the paper - three
+    // times the ink cross-hatch lays at the same spacing. Converting first
+    // makes the two exactly equal at every density, which is what this style
+    // was offered as: the same ink as the default, arranged differently.
+    const inkLengthPerArea = (PASSES_PER_SPACING * nibWidthMm) / spacingMm;
+    return Math.min(MAX_COVERAGE, 1 - Math.exp(-inkLengthPerArea));
 }
 
 export const cycloid: FillStrategy = {

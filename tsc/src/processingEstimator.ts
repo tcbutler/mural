@@ -299,6 +299,11 @@ export const INFILL_US_PER_SEGMENT_AT_BASE_SPACING: Record<FillStrategyName, num
     // density. Pinned near the top of the measured range rather than at the
     // median, because a big dense render is the one the estimate is there to
     // warn about, and a small one is tens of milliseconds either way.
+    //
+    // Left alone when cycloidPath.ts stopped sampling loops at a fixed angle:
+    // that cuts the point count at the dense end, where this was measured, so the
+    // number is now conservative there rather than wrong - and conservative is
+    // the direction this one was already chosen for.
     cycloid: 55,
 };
 export const INFILL_BASE_SPACING_MM = 10; // density level 3 - the coefficients above are calibrated at this spacing

@@ -49,7 +49,9 @@ export type CycloidOptions = {
     // absorbs.
     radiusFraction?: number;
     // Radians of loop per emitted point. Smaller is smoother and costs more
-    // points.
+    // points. Omitted, it is derived from the loop size so that the chord
+    // error stays at the plotter's own tolerance whatever the density - see
+    // stepRadiansFor.
     stepRadians?: number;
     // Peak random displacement per point, in mm. Zero draws a mechanically
     // perfect scribble, which is a contradiction in terms.
@@ -82,7 +84,41 @@ const MIN_ADVANCE_FRACTION = 0.05;
 const MAX_ADVANCE_FACTOR = 6;
 
 const DEFAULT_RADIUS_FRACTION = 0.8;
-const DEFAULT_STEP_RADIANS = 0.32;
+
+// How far a loop's chord may sit from the arc it stands in for, in mm.
+// Matches toCommands.ts's own RDP_TOLERANCE_MM, which every path passes
+// through before it becomes a command file: sampling finer than that spends
+// waypoints the simplifier is entitled to throw away, and the machine stops
+// the motors at every waypoint it does keep.
+const CHORD_TOLERANCE_MM = 0.1;
+
+// Bounds on the derived step. The ceiling keeps a big loop from being drawn
+// as a polygon; the floor stops a vanishingly small one from emitting
+// thousands of points.
+const MIN_STEP_RADIANS = 0.25;
+const MAX_STEP_RADIANS = 0.8;
+
+/**
+ * Radians of loop per emitted point, for a loop of this radius.
+ *
+ * A fixed step was the first version's mistake, and it only showed at the
+ * dense end of the ladder: the loops shrink with the row spacing, but a fixed
+ * step keeps emitting the same twenty-odd points per turn however small they
+ * get, so the waypoint count per unit of ink climbs as the drawing gets
+ * denser. At the densest level that was a command file the machine could not
+ * store. Solving for a fixed chord error instead holds the sampling at what
+ * the plotter can actually resolve, and lands on the old 0.32 at the default
+ * density - which is where it was tuned by eye.
+ *
+ * The radius here is the loop's, so the chord error is measured against the
+ * circle rather than against the trochoid the pen really draws. The trochoid
+ * is the flatter of the two, so this errs toward sampling too finely.
+ */
+export function stepRadiansFor(radius: number): number {
+    if (!(radius > CHORD_TOLERANCE_MM)) return MAX_STEP_RADIANS;
+    const step = 2 * Math.acos(1 - CHORD_TOLERANCE_MM / radius);
+    return Math.min(MAX_STEP_RADIANS, Math.max(MIN_STEP_RADIANS, step));
+}
 
 // How much the loop size and the pen's progress along the row wander, as a
 // fraction of their nominal values, re-drawn once per turn.
@@ -174,7 +210,6 @@ export function traceCycloidRow(x0: number, x1: number, y: number, options: Cycl
         penWidthMm,
         coverage,
         radiusFraction = DEFAULT_RADIUS_FRACTION,
-        stepRadians = DEFAULT_STEP_RADIANS,
         jitterMm = 0,
         random = () => 0.5,
     } = options;
@@ -182,6 +217,7 @@ export function traceCycloidRow(x0: number, x1: number, y: number, options: Cycl
     if (!(spacingMm > 0) || !(x1 > x0) || coverage <= 0) return [];
 
     const radius = radiusFraction * spacingMm;
+    const stepRadians = options.stepRadians ?? stepRadiansFor(radius);
     const advance = advancePerLoop(coverage, radius, penWidthMm, spacingMm);
     const nominalStep = (advance * stepRadians) / (2 * Math.PI);
 

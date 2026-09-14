@@ -60,7 +60,7 @@ and infill density 3, so the numbers are comparable.
 |---|---|---|
 | <img src="../images/style-examples/crossHatch45.png" width="230"><br>**Cross-hatch** (default)<br><sub>Even 45° grid · 174 strokes · 10.9 m</sub> | <img src="../images/style-examples/singleDirectionHatch.png" width="230"><br>**Single-direction**<br><sub>One diagonal, ~⅔ the ink · 90 strokes · 7.1 m</sub> | <img src="../images/style-examples/crossHatchAngled.png" width="230"><br>**Angled cross-hatch**<br><sub>Any angle; colour layers each get their own · 169 strokes · 10.8 m</sub> |
 | <img src="../images/style-examples/jitteredHatch.png" width="230"><br>**Jittered**<br><sub>Hand-drawn wobble · 170 strokes · 10.8 m</sub> | <img src="../images/style-examples/spiral.png" width="230"><br>**Spiral**<br><sub>One continuous stroke per region · 91 strokes · 7.1 m</sub> | <img src="../images/style-examples/contour.png" width="230"><br>**Contour**<br><sub>Rings following the shape's own outline · 33 strokes · 5.9 m</sub> |
-| <img src="../images/style-examples/gradientHatch.png" width="230"><br>**Gradient hatch**<br><sub>Follows the image's shading · 79 strokes · 5.6 m</sub> | <img src="../images/style-examples/cycloid.png" width="230"><br>**Loop scribble**<br><sub>Biro shading; loops crowd for tone · 138 strokes · 12.0 m</sub> | |
+| <img src="../images/style-examples/gradientHatch.png" width="230"><br>**Gradient hatch**<br><sub>Follows the image's shading · 79 strokes · 5.6 m</sub> | <img src="../images/style-examples/cycloid.png" width="230"><br>**Loop scribble**<br><sub>Biro shading; loops crowd for tone · 127 strokes · 11.0 m</sub> | |
 
 Note how thin gradient hatch looks here: it only marks where the image actually
 has shading to follow, and most of this test image is flat colour. Give it
@@ -77,14 +77,25 @@ It is matched to the default cross-hatch's ink rather than to the lighter
 styles, which is deliberate. Matched to a single-direction hatch the loops
 stretch out into a plain wavy line — correct tone, no scribble. Matched to
 cross-hatch they are real loops, and swapping to it changes the handwriting
-rather than the density.
+rather than the density. The match is exact by construction, at every
+density: a row of loops lays the same length of ink as the two hatch passes
+it stands in for.
+
+What it does cost is waypoints. The command file stores every point along a
+stroke, and a curve needs far more of them than a straight line — about two
+and a half times as many for the same ink. On an A2 sheet with six pens at
+the densest infill that is a 777KB command file against cross-hatch's 324KB,
+and the machine has around 600KB of filesystem free. Loop scribble is a
+style for a drawing, not for covering a wall in solid tone; past the middle
+of the density ladder on a large multi-pen plot, Mural will tell you there
+is not enough space for it.
 
 Give it one flat region and it draws a texture. Give it tone and it draws
 shading, which is the point of it:
 
 | | |
 |---|---|
-| <img src="../images/style-examples/crossHatch45-gray4.png" width="330"><br><sub>Cross-hatch, 4 levels · 2,876 strokes · 31.7 m</sub> | <img src="../images/style-examples/cycloid-gray4.png" width="330"><br><sub>Loop scribble, 4 levels · 2,925 strokes · 34.5 m</sub> |
+| <img src="../images/style-examples/crossHatch45-gray4.png" width="330"><br><sub>Cross-hatch, 4 levels · 2,876 strokes · 31.7 m</sub> | <img src="../images/style-examples/cycloid-gray4.png" width="330"><br><sub>Loop scribble, 4 levels · 2,860 strokes · 32.5 m</sub> |
 
 ### The right style for the subject
 
