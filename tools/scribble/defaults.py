@@ -58,6 +58,15 @@ def preprocess(rgb, feats=None, ink_ceiling=INK_CEILING):
     # --- warmth -------------------------------------------------------
     # A subject that differs in hue but not in tone vanishes in greyscale.
     # No algorithm recovers it, because the information is not in the channel.
+    # Strength confirmed by blind comparison, not chosen: the same photo and
+    # the same algorithm rendered at warmth 0.0, 0.3 and 0.6, and a human
+    # picked 0.6. At zero the cat measured *lighter* than the hedge behind it
+    # in the demand map (-0.036); at 0.6 it is firmly darker (+0.149). This is
+    # the one preprocessing rule the scoring cannot check - the score compares
+    # a render against the demand map it was handed, so when preprocessing
+    # changes the target, it changes what "correct" means. Human judgement is
+    # the only instrument that works here.
+    WARM_STRENGTH = 0.6
     warm = 0.0
     # Gated on the image actually having colour in it. A near-neutral photo
     # still produces two chromaticity clusters, but they are made of a handful
@@ -67,7 +76,7 @@ def preprocess(rgb, feats=None, ink_ceiling=INK_CEILING):
     if (feats["chroma"] > 0.10 and feats["chromatic_fraction"] > 0.10
             and feats["tonal_separation"] < 0.08 + 0.5 * feats["hue_separation"]
             and feats["hue_separation"] > 0.045):
-        warm = 0.6
+        warm = WARM_STRENGTH
         why["warm"] = (warm, f"the two colour groups differ by only "
                              f"{feats['tonal_separation']:.2f} in tone but "
                              f"{feats['hue_separation']:.3f} in hue, so grey alone "
