@@ -753,7 +753,12 @@ function init() {
         previewRendering = false;
         hasRenderedOnce = false;
         updatePreviewStatusUI();
-        $("#processingEstimateText,#processingWarning,#plottingEstimateSummary").hide().empty();
+        $("#processingWarning,#plottingEstimateSummary").hide().empty();
+        // Not .empty(): this one's <small> is the element
+        // renderProcessingEstimate writes into, and emptying the div threw it
+        // away - so from the second image onward the estimate was written into
+        // nothing and the line never came back.
+        $("#processingEstimateText").hide().find('small').empty();
         $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale,#whitePointRationale,#warmthRationale").hide();
 
         // An undecodable photo or a malformed SVG must not leave the input
@@ -2499,6 +2504,14 @@ async function runProcessingEstimate() {
             hueGrouping: getHueGroupingEnabled(),
             flattenPaths: getFlattenPaths(),
             grayscaleLevels: getGrayscaleLevels() || undefined,
+            // Sent as real numbers rather than through getWhitePoint/
+            // getWarmth, whose undefined-at-rest convention means "leave the
+            // image alone" to the renderer but "use the recommendation" to
+            // the estimator. A user who has deliberately dragged the white
+            // point back to 100% must get an estimate for the render they
+            // will actually get.
+            whitePoint: getWhitePoint() ?? 1,
+            warmth: getWarmth() ?? 0,
         };
         const result = await estimateInWorker(currentRaster, options);
         lastEstimate = result;
