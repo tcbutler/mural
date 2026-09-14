@@ -10,6 +10,7 @@ import { measureDistance } from './measurer';
 import { loadPaper } from './paperLoader';
 import { flattenPaths, flattenPathsAcrossLayers } from './flattener';
 import { simplifyPaths } from './simplifier';
+import { encodeCommandFile } from './commandFile';
 import { DEFAULT_NIB_WIDTH_MM } from './huePalette';
 import { estimatePlottingSecondsFromCommands, PlottingTimeEstimate } from './plottingEstimator';
 
@@ -140,7 +141,7 @@ export async function renderSvgJsonToCommands(
     // nor pen-swap regexes, so including them here is harmless.
     const plotting = estimatePlottingSecondsFromCommands(dedupedCommands);
 
-    const commandStrings = dedupedCommands.map(stringifyCommand);
+    const commandStrings = encodeCommandFile(dedupedCommands);
     return {
         commands: commandStrings,
         distance: totalDistance,
@@ -306,7 +307,7 @@ async function renderMultiColor(
     // remaining layers), not the originally detected color count.
     const plotting = estimatePlottingSecondsFromCommands(assembled);
 
-    const commandStrings = assembled.map(stringifyCommand);
+    const commandStrings = encodeCommandFile(assembled);
     return {
         commands: commandStrings,
         distance: roundedTotalDistance,
@@ -332,10 +333,4 @@ function resolvePaletteNames(colorGroups: ColorGroup[], suppliedPalette?: Palett
     });
 }
 
-function stringifyCommand(cmd: Command): string {
-    if (typeof cmd === 'string') {
-        return cmd;
-    } else {
-        return `${cmd.x} ${cmd.y}`;
-    }
-}
+

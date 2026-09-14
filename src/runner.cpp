@@ -12,6 +12,13 @@
 #include "ArduinoJson.h"
 using namespace std;
 
+// The command file format this build reads and the resolution its coordinates
+// are written at - see tsc/src/commandFile.ts, which writes them. A file
+// without a version line is the older absolute-millimetre format and is still
+// read; anything claiming a version this build does not know is refused.
+constexpr int COMMAND_FILE_VERSION = 2;
+constexpr double COMMAND_FILE_UNITS_PER_MM = 10.0;
+
 #ifdef MURAL_SMOOTH_MOTION
 // UNTESTED ON HARDWARE: motion smoothing. Angle threshold below which two
 // consecutive drawing segments are treated as collinear enough to fold into
@@ -68,6 +75,34 @@ double Runner::estimateSegmentSeconds(Movement::Point from, Movement::Point to, 
     return movement->estimateTravelSeconds(mm, penDown ? printSpeedSteps : moveSpeedSteps);
 }
 
+// Reads one coordinate line into an absolute position.
+//
+// A v1 line is a position in millimetres, and `position` is simply replaced. A
+// v2 line is a step from the previous point in tenths of a millimetre, so it is
+// added to what the caller has read so far - which is why decoding cannot start
+// anywhere but at the point the file counts from (see Runner::decodedPosition).
+//
+// Returns false for a line with no separator in it, which the callers already
+// treat as "not a coordinate".
+static bool decodeCoordinateLine(const String& line, bool relative, Movement::Point& position) {
+    const int separator = line.indexOf(' ');
+    if (separator <= 0) {
+        return false;
+    }
+
+    const double first = line.substring(0, separator).toDouble();
+    const double second = line.substring(separator + 1).toDouble();
+
+    if (relative) {
+        position.x += first / COMMAND_FILE_UNITS_PER_MM;
+        position.y += second / COMMAND_FILE_UNITS_PER_MM;
+    } else {
+        position.x = first;
+        position.y = second;
+    }
+    return true;
+}
+
 void Runner::scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstimate& out) {
     // One pass over the command lines, replaying them symbolically: track where
     // the pen would be and whether it is down, and accumulate the estimated
@@ -78,6 +113,11 @@ void Runner::scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstima
     // `offset` is a checkpoint position; the work before it is recorded
     // separately so a resumed plot starts from the right percentage instead of 0.
     Movement::Point position = startPosition;
+    // Where the file's own coordinates have got to, which is not where the pen
+    // is: the scan starts at the first command line, so decoding starts at the
+    // origin the file counts from. Only the pen's travel is costed from
+    // `position`.
+    Movement::Point decoded;
     bool penDown = false;
     const double penSeconds = pen->estimateMoveSeconds();
 
@@ -100,13 +140,11 @@ void Runner::scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstima
             // predict. Counting it as zero keeps the remaining work honest.
             continue;
         } else {
-            const int sep = line.indexOf(' ');
-            if (sep <= 0) {
+            if (!decodeCoordinateLine(line, relativeCoordinates, decoded)) {
                 continue;
             }
-            Movement::Point target(line.substring(0, sep).toDouble(), line.substring(sep + 1).toDouble());
-            out.totalSeconds += estimateSegmentSeconds(position, target, penDown);
-            position = target;
+            out.totalSeconds += estimateSegmentSeconds(position, decoded, penDown);
+            position = decoded;
         }
     }
 }
@@ -123,10 +161,28 @@ int Runner::computePercent() const {
     return percent;
 }
 
-bool Runner::parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut) {
+bool Runner::parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut, bool& relativeCoordinatesOut) {
     paletteCountOut = 0;
+    relativeCoordinatesOut = false;
 
     auto line = file.readStringUntil('\n');
+
+    // Optional `v<n>` version line, ahead of every other header
+    // (tsc/src/commandFile.ts). It sits first precisely so firmware that
+    // predates it stops here: the coordinates in a v2 file are steps rather
+    // than positions, and a build that read them as positions would draw a few
+    // millimetres of nonsense in the corner of the page and call it done.
+    if (line.charAt(0) == 'v') {
+        String version = line.substring(1);
+        version.trim();
+        if (version.toInt() != COMMAND_FILE_VERSION) {
+            Serial.println("Bad file - unsupported command file version " + version);
+            return false;
+        }
+        relativeCoordinatesOut = true;
+        line = file.readStringUntil('\n');
+    }
+
     if (line.charAt(0) != 'd') {
         Serial.println("Bad file - no distance");
         return false;
@@ -199,9 +255,12 @@ bool Runner::initTaskProvider() {
     double fileTopDistance;
     paletteCount = 0;
     currentColorIndex = 1;
-    if (!parseCommandFileHeader(openedFile, totalDistance, hasTopDistance, fileTopDistance, palette, paletteCount)) {
+    if (!parseCommandFileHeader(openedFile, totalDistance, hasTopDistance, fileTopDistance, palette, paletteCount, relativeCoordinates)) {
         return false;
     }
+    // A fresh run reads the file from its first command line, so the decoder
+    // starts where the file counts from rather than where the pen is.
+    decodedPosition = Movement::Point(0, 0);
 
     if (hasTopDistance) {
         auto currentTopDistance = (double)movement->getTopDistance();
@@ -309,10 +368,17 @@ Task *Runner::getNextTask()
         }
         else
         {
-            auto x = line.substring(0, line.indexOf(" ")).toDouble();
-            auto y = line.substring(line.indexOf(" ") + 1).toDouble();
+            if (!decodeCoordinateLine(line, relativeCoordinates, decodedPosition)) {
+                // A line with no separator in it - a stray blank one, most
+                // likely. Stand still for this line and read the next on the
+                // following call. The previous version of this code took the
+                // same line as a move to (0, 0), which on a wall-mounted
+                // machine means driving the pen to the top corner.
+                pendingTaskSeconds = 0;
+                return new InterpolatingMovementTask(movement, pen, targetPosition);
+            }
             auto previousTarget = targetPosition;
-            targetPosition = Movement::Point(x, y);
+            targetPosition = decodedPosition;
 
 #ifdef MURAL_SMOOTH_MOTION
             // UNTESTED ON HARDWARE: fold in as many further consecutive
@@ -325,6 +391,9 @@ Task *Runner::getNextTask()
             Movement::Point previousPoint;
             bool haveCoordinates = movement->getCoordinates(previousPoint);
             auto mergedTarget = targetPosition;
+            // Each peeked line is decoded against the last point actually
+            // MERGED, not the last one peeked: a line that is put back has to
+            // decode identically when it is read again for real.
             while (haveCoordinates && openedFile.available()) {
                 auto bookmark = openedFile.position();
                 auto peekLine = openedFile.readStringUntil('\n');
@@ -332,15 +401,18 @@ Task *Runner::getNextTask()
                     openedFile.seek(bookmark);
                     break;
                 }
-                auto px = peekLine.substring(0, peekLine.indexOf(" ")).toDouble();
-                auto py = peekLine.substring(peekLine.indexOf(" ") + 1).toDouble();
-                Movement::Point peekedTarget(px, py);
+                Movement::Point peekedTarget = decodedPosition;
+                if (!decodeCoordinateLine(peekLine, relativeCoordinates, peekedTarget)) {
+                    openedFile.seek(bookmark);
+                    break;
+                }
                 if (angleBetweenSegments(previousPoint, mergedTarget, peekedTarget) > smoothAngleThresholdRad) {
                     openedFile.seek(bookmark);
                     break;
                 }
                 previousPoint = mergedTarget;
                 mergedTarget = peekedTarget;
+                decodedPosition = peekedTarget;
             }
             targetPosition = mergedTarget;
 #endif
@@ -803,7 +875,10 @@ int Runner::countTotalCommandLines() {
     bool hasTopDistanceUnused;
     double topDistanceUnused;
     int paletteCountUnused;
-    if (!parseCommandFileHeader(f, totalDistanceUnused, hasTopDistanceUnused, topDistanceUnused, nullptr, paletteCountUnused)) {
+    // This one only counts lines, so it never decodes a coordinate and does not
+    // care which format they are in.
+    bool relativeCoordinatesUnused;
+    if (!parseCommandFileHeader(f, totalDistanceUnused, hasTopDistanceUnused, topDistanceUnused, nullptr, paletteCountUnused, relativeCoordinatesUnused)) {
         f.close();
         return 0;
     }
@@ -832,7 +907,7 @@ bool Runner::beginResume(const Checkpoint& cp) {
     bool hasTopDistance;
     double fileTopDistance;
     paletteCount = 0;
-    if (!parseCommandFileHeader(openedFile, totalDistance, hasTopDistance, fileTopDistance, palette, paletteCount)) {
+    if (!parseCommandFileHeader(openedFile, totalDistance, hasTopDistance, fileTopDistance, palette, paletteCount, relativeCoordinates)) {
         Serial.println("Resume failed: bad command file header");
         return false;
     }
@@ -875,6 +950,11 @@ bool Runner::beginResume(const Checkpoint& cp) {
     executedLines = cp.executedLines;
     progress = -1;
     targetPosition = Movement::Point(cp.x, cp.y);
+    // Resuming mid-file means resuming mid-decode: the steps from here on are
+    // measured from the last point the file placed, which is where the machine
+    // was standing when the checkpoint was taken. This is why a checkpoint
+    // records coordinates and not only an offset.
+    decodedPosition = Movement::Point(cp.x, cp.y);
 
     auto homeCoordinates = movement->getHomeCoordinates();
     finishingSequence[0] = new InterpolatingMovementTask(movement, pen, homeCoordinates);

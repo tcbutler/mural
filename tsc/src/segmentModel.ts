@@ -240,6 +240,29 @@ function estimateInfillSegmentsForOneShape(
             const rings = Math.ceil(avgShapeSpanMm / (2 * spacingMm)) + 2;
             return { count: Math.max(1, rings), avgLengthMm: avgShapeSpanMm * Math.PI * 0.5 };
         }
+
+        case 'cycloid': {
+            // Rows of looping strokes (cycloid.ts): one row every spacingMm
+            // down the shape, the same row count a single-direction hatch
+            // produces. Each row breaks into a fresh stroke wherever it leaves
+            // the shape, so a convex shape gives one stroke per row and a
+            // ragged one gives more - the same relationship the hatch styles
+            // model with shapeComplexity, reused here rather than invented.
+            const rows = Math.ceil(avgShapeSpanMm / spacingMm);
+            const breaksPerRow = 1 + shapeComplexity;
+            const count = Math.max(1, Math.round(rows * breaksPerRow));
+
+            // A row's drawn length is not its span: the pen is looping the
+            // whole way across, so it travels further than the straight-line
+            // distance. The ratio is the trochoid's length per turn over its
+            // advance, which at this fill's own coverage runs about 2x - see
+            // cycloidPath.ts, where the same relationship is solved exactly.
+            const LOOP_PATH_LENGTH_FACTOR = 2;
+            return {
+                count,
+                avgLengthMm: (avgShapeSpanMm / breaksPerRow) * LOOP_PATH_LENGTH_FACTOR,
+            };
+        }
     }
 }
 

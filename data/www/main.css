@@ -522,6 +522,15 @@ input[type="range"].form-range::-moz-range-track {
   white-space: nowrap;
 }
 
+/* The two tone controls carry a live readout in their own label: unlike the
+   density and despeckle ladders, these are real measurements of the image in
+   front of you, and "65%" is the whole point of dragging one. */
+.tone-readout {
+  font-weight: 400;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 /* =====================================================================
    Progress bars / spinners
    ===================================================================== */

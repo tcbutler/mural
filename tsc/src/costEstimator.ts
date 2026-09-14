@@ -46,7 +46,8 @@
 //       speeds: CURRENT_FIRMWARE_SPEEDS, // the default; see plottingEstimator.ts
 //   });
 //
-//   result.characteristics   // ImageCharacteristics - the raw image stats
+//   result.characteristics   // ImageCharacteristics - the raw image stats,
+//                            // measured on the image as supplied (see below)
 //   result.recommendations   // SmartDefaults - value + human-readable rationale, per field
 //   result.deviceCalibration // DeviceCalibration - this device's measured speed factor
 //   result.processing        // ProcessingEstimate - seconds + per-stage breakdown
@@ -68,6 +69,7 @@ import {
     CURRENT_FIRMWARE_SPEEDS,
 } from './plottingEstimator';
 import { projectSegmentCounts, spacingMmForDensity } from './segmentModel';
+import { needsPreparation, preparationFor, prepareTone } from './tonePreparation';
 
 export {
     // Re-exported so a caller only needs one import for the common path,
@@ -103,6 +105,14 @@ export type CostEstimatorOptions = {
     knockout?: boolean;
     flattenPaths?: boolean;
     grayscaleLevels?: number;
+    // Tone preparation (tonePreparation.ts), the pair that decides what the
+    // render will draw FROM. They belong here for the same reason every
+    // other render setting does: the estimate is meant to describe the plot
+    // that is about to happen, and a render with a white point set traces a
+    // measurably different image from one without. Omitted, each defaults to
+    // its own recommendation, like the settings above.
+    whitePoint?: number;
+    warmth?: number;
     // A cheap 0..1 image-complexity proxy for the processing estimate.
     // Defaults to (1 - flatFraction) from the computed characteristics -
     // the fraction of the image that ISN'T a large uniform region, a
@@ -119,6 +129,9 @@ export type CostEstimatorOptions = {
 };
 
 export type CostEstimateAndRecommendation = {
+    // Measured on the image as supplied, which is what the recommendations
+    // below are advice about. The processing and plotting estimates are built
+    // on a second reading of the PREPARED image - see estimateAndRecommend.
     characteristics: ImageCharacteristics;
     recommendations: SmartDefaults;
     deviceCalibration: DeviceCalibration;
@@ -137,6 +150,12 @@ export type CostEstimateAndRecommendation = {
 const OUTLINE_PERIMETER_PER_SPAN = 3.0;
 
 export function estimateAndRecommend(imageData: ImageData, options: CostEstimatorOptions = {}): CostEstimateAndRecommendation {
+    // Two readings of the same image, and which one answers which question
+    // matters. The recommendations are advice about the image as supplied -
+    // "nothing here is bright enough to read as paper" is a statement about
+    // the photograph, and asking it of an image whose white point has already
+    // been set would be circular. The cost estimates are about the render
+    // that is about to run, which will trace the PREPARED image.
     const characteristics = analyzeImageCharacteristics(imageData);
     const recommendations = recommendDefaults(characteristics);
 
@@ -144,7 +163,22 @@ export function estimateAndRecommend(imageData: ImageData, options: CostEstimato
     const fillStrategy = options.fillStrategy ?? recommendations.fillStrategy.value;
     const infillDensity = options.infillDensity ?? recommendations.infillDensity.value;
     const hueGrouping = options.hueGrouping ?? recommendations.hueGrouping.value;
-    const complexity = options.complexity ?? (1 - characteristics.flatFraction);
+
+    // preparationFor rather than the two values directly, so the rule about
+    // warmth on the colour path is stated once, in the module that owns it,
+    // and the estimate cannot drift from what the render will really do.
+    const preparation = preparationFor({
+        whitePoint: options.whitePoint ?? recommendations.whitePoint.value,
+        warmth: options.warmth ?? recommendations.warmth.value,
+        colorCount,
+    });
+    // A second pass over the pixels, and only when there is a preparation to
+    // apply - which is why this is not simply done unconditionally.
+    const preparedCharacteristics = needsPreparation(preparation)
+        ? analyzeImageCharacteristics(prepareTone(imageData, preparation))
+        : characteristics;
+
+    const complexity = options.complexity ?? (1 - preparedCharacteristics.flatFraction);
 
     const deviceCalibration = options.deviceFactor !== undefined
         ? { factor: options.deviceFactor, benchmarkMs: 0, measuredAt: Date.now() }

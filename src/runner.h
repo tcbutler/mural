@@ -58,6 +58,16 @@ class Runner {
     // Movement::Point that pegged progress at 100%.
     double totalDistance = 0;
     Movement::Point targetPosition;
+    // Command files from v2 onward write each point as a step from the one
+    // before it rather than as a position (tsc/src/commandFile.ts - it more
+    // than halves the file, which matters because the whole drawing has to fit
+    // in what is left of an 832K filesystem). Decoding is therefore stateful:
+    // this is where the reader has got to, which is NOT targetPosition - that
+    // one starts at wherever the pen is, while this starts at the origin the
+    // file counts from. On a resume they are seeded alike, from the
+    // checkpoint's own coordinates.
+    bool relativeCoordinates = false;
+    Movement::Point decodedPosition;
     int progress = 0;
     int totalLines = 0;
     int executedLines = 0;
@@ -172,7 +182,7 @@ class Runner {
     // nullptr to skip storing them (paletteCountOut is still set). Returns
     // false only if d or h is missing/malformed. Shared by initTaskProvider()
     // and beginResume() so the two don't duplicate header parsing.
-    static bool parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut);
+    static bool parseCommandFileHeader(File& file, double& totalDistanceOut, bool& hasTopDistanceOut, double& topDistanceOut, String* paletteNamesOut, int& paletteCountOut, bool& relativeCoordinatesOut);
 
     public:
     // Set by initTaskProvider() when start()/dryRun() returns false, so the

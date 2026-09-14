@@ -1,6 +1,6 @@
 # Mark-making
 
-How Mural 2.0 puts ink on paper: seven fill styles, tonal shading from one pen,
+How Mural 2.0 puts ink on paper: eight fill styles, tonal shading from one pen,
 and multi-colour separation with pen swaps.
 
 Every picture here is drawn from the real command file the machine would
@@ -20,9 +20,38 @@ line work, and a wordmark knocked out of a shadowed band.
 
 ---
 
-## The seven fill styles
+## Before the marks: what the image even is
 
-The original cross-hatch plus six new ones, all on the same image at 400 × 229 mm
+Every control below decides how to draw the image. Two decide what the image
+is, and they sit above the rest in the preview because a photograph can defeat
+the whole pipeline no matter which fill style it gets. Both rest at a no-op and
+both are recommended per image, with the reason shown underneath.
+
+**Paper brightness** is the brightness that counts as bare paper. A photograph
+of a page has no true white in it: metered for the room, the paper comes back a
+mid grey, and the tracer then inks the entire background. On a photo of a pen
+drawing on canvas, the brightest real tone measured 87% — at the lightest of
+three tonal levels, that was 89% of the frame going to ink, against 69% once
+the white point was set to what the paper actually measures.
+
+**Colour filter** darkens warm colours against cool ones before the image is
+reduced to tone, the way a coloured lens filter does for black-and-white film.
+A subject and its background can share a brightness and look nothing alike: on
+a photo of a ginger cat against a green hedge, the cat read 0.42 and the hedge
+0.40, so a faithful grey conversion turned the cat into a hole in a dark
+surround. Their red-minus-blue differed by more than twice. No fill style
+recovers that — the information has already left the channel. The strength
+(0.6) was picked by blind comparison of the same photo at 0, 0.3 and 0.6.
+
+It is dropped on the multi-colour path, and the control goes with it: that path
+separates *by* hue and still has the colour, so the filter would only flatten
+what is about to be drawn.
+
+---
+
+## The eight fill styles
+
+The original cross-hatch plus seven new ones, all on the same image at 400 × 229 mm
 and infill density 3, so the numbers are comparable.
 
 <img src="../images/style-examples/source.png" width="480" alt="Source image: a gradient disc, flat colour shapes, a vertical colour ramp, thin diagonal line work, and MURAL2.0 knocked out of a dark band with a soft drop shadow">
@@ -31,11 +60,40 @@ and infill density 3, so the numbers are comparable.
 |---|---|---|
 | <img src="../images/style-examples/crossHatch45.png" width="230"><br>**Cross-hatch** (default)<br><sub>Even 45° grid · 174 strokes · 10.9 m</sub> | <img src="../images/style-examples/singleDirectionHatch.png" width="230"><br>**Single-direction**<br><sub>One diagonal, ~⅔ the ink · 90 strokes · 7.1 m</sub> | <img src="../images/style-examples/crossHatchAngled.png" width="230"><br>**Angled cross-hatch**<br><sub>Any angle; colour layers each get their own · 169 strokes · 10.8 m</sub> |
 | <img src="../images/style-examples/jitteredHatch.png" width="230"><br>**Jittered**<br><sub>Hand-drawn wobble · 170 strokes · 10.8 m</sub> | <img src="../images/style-examples/spiral.png" width="230"><br>**Spiral**<br><sub>One continuous stroke per region · 91 strokes · 7.1 m</sub> | <img src="../images/style-examples/contour.png" width="230"><br>**Contour**<br><sub>Rings following the shape's own outline · 33 strokes · 5.9 m</sub> |
-| <img src="../images/style-examples/gradientHatch.png" width="230"><br>**Gradient hatch**<br><sub>Follows the image's shading · 79 strokes · 5.6 m</sub> | | |
+| <img src="../images/style-examples/gradientHatch.png" width="230"><br>**Gradient hatch**<br><sub>Follows the image's shading · 79 strokes · 5.6 m</sub> | <img src="../images/style-examples/cycloid.png" width="230"><br>**Loop scribble**<br><sub>Biro shading; loops crowd for tone · 127 strokes · 11.0 m</sub> | |
 
 Note how thin gradient hatch looks here: it only marks where the image actually
 has shading to follow, and most of this test image is flat colour. Give it
 something with tone and it behaves completely differently.
+
+**Loop scribble** fills a shape with rows of continuous looping strokes, the
+way someone shades with a biro without lifting the pen. The loops crowd
+together for a darker tone and stretch out for a lighter one, and the advance
+rate that controls that is solved rather than tuned: ink landing on ink covers
+no new paper, so the naive reading saturates around half tone and flattens
+everything above a mid grey into the same shade.
+
+It is matched to the default cross-hatch's ink rather than to the lighter
+styles, which is deliberate. Matched to a single-direction hatch the loops
+stretch out into a plain wavy line — correct tone, no scribble. Matched to
+cross-hatch they are real loops, and swapping to it changes the handwriting
+rather than the density. The match is exact by construction, at every
+density: a row of loops lays the same length of ink as the two hatch passes
+it stands in for.
+
+What it does cost is waypoints. The command file stores every point along a
+stroke, and a curve needs far more of them than a straight line — about two
+and a half times as many for the same ink. On an A2 sheet with six pens at
+the densest infill that is a 394KB command file against cross-hatch's 172KB,
+where the machine has around 600KB of filesystem free. It fits, with less
+room to spare than any other style.
+
+Give it one flat region and it draws a texture. Give it tone and it draws
+shading, which is the point of it:
+
+| | |
+|---|---|
+| <img src="../images/style-examples/crossHatch45-gray4.png" width="330"><br><sub>Cross-hatch, 4 levels · 2,876 strokes · 31.7 m</sub> | <img src="../images/style-examples/cycloid-gray4.png" width="330"><br><sub>Loop scribble, 4 levels · 2,860 strokes · 32.5 m</sub> |
 
 ### The right style for the subject
 

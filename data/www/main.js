@@ -753,8 +753,13 @@ function init() {
         previewRendering = false;
         hasRenderedOnce = false;
         updatePreviewStatusUI();
-        $("#processingEstimateText,#processingWarning,#plottingEstimateSummary").hide().empty();
-        $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale").hide();
+        $("#processingWarning,#plottingEstimateSummary").hide().empty();
+        // Not .empty(): this one's <small> is the element
+        // renderProcessingEstimate writes into, and emptying the div threw it
+        // away - so from the second image onward the estimate was written into
+        // nothing and the line never came back.
+        $("#processingEstimateText").hide().find('small').empty();
+        $("#fillMethodRationale,#infillDensityRationale,#turdSizeRationale,#colorCountRationale,#hueGroupingRationale,#whitePointRationale,#warmthRationale").hide();
 
         // An undecodable photo or a malformed SVG must not leave the input
         // naming a file that never loaded, or the render paths' presence check
@@ -785,6 +790,9 @@ function init() {
             $(".svg-control").hide();
             $("#infillDensity").val(0);
             $("#turdSize").val(2);
+            $("#whitePoint").val(1);
+            $("#warmth").val(0);
+            updateToneReadouts();
             $("#fillMethod").val("crossHatch45");
             setColorMode('single');
             $("#grayscaleLevels").val(3);
@@ -797,10 +805,16 @@ function init() {
     });
 
     // A previously downloaded command file (see #downloadCommands) starts
-    // with a "d<total distance>" line.
+    // with a version line, or - if it was downloaded before the format
+    // carried one - with its "d<total distance>" header (commandFile.ts).
+    const COMMAND_FILE_VERSION_LINE = 'v2';
+
     function isCommandFile(text) {
-        const firstLine = (text.split('\n', 1)[0] || '').trim();
-        return /^d[\d.]+$/.test(firstLine);
+        const [first, second] = text.split('\n', 2).map(line => (line || '').trim());
+        if (first === COMMAND_FILE_VERSION_LINE) {
+            return /^d[\d.]+$/.test(second);
+        }
+        return /^d[\d.]+$/.test(first);
     }
 
     // Movement coordinate lines look like "x y" (see runner.cpp's
@@ -810,15 +824,33 @@ function init() {
     // only checked to be >= 0), so that's the dimension worth warning about
     // when re-uploading a file that may have been generated for a different
     // pin distance.
+    //
+    // In a v2 file those numbers are a STEP from the previous point, in
+    // tenths of a millimetre, so they have to be accumulated rather than
+    // read - see tsc/src/commandFile.ts, which is where the format lives.
+    // This page cannot import that module (the worker bundle is reached by
+    // message, not by require), so the running total is repeated here.
     function findMaxCommandFileX(text) {
+        const lines = text.split('\n');
+        const relative = (lines[0] || '').trim() === COMMAND_FILE_VERSION_LINE;
+        const unitsPerMm = 10;
+
         let maxX = null;
-        for (const line of text.split('\n')) {
-            const match = line.match(/^([\d.]+) ([\d.]+)$/);
-            if (match) {
-                const x = parseFloat(match[1]);
-                if (maxX === null || x > maxX) {
-                    maxX = x;
-                }
+        let x = 0;
+        for (const line of lines) {
+            const match = line.trim().match(/^(-?[\d.]+) (-?[\d.]+)$/);
+            if (!match) {
+                continue;
+            }
+            const value = parseFloat(match[1]);
+            if (relative) {
+                x += value;
+            } else {
+                x = value * unitsPerMm;
+            }
+            const mm = x / unitsPerMm;
+            if (maxX === null || mm > maxX) {
+                maxX = mm;
             }
         }
         return maxX;
@@ -830,7 +862,8 @@ function init() {
     // file's coordinates were laid out for. Older files (or ones downloaded
     // before this header existed) won't have it.
     function findFileTopDistance(text) {
-        const headerLines = text.split('\n', 3);
+        // Four, not three: a v2 file spends its first line saying so.
+        const headerLines = text.split('\n', 4);
         for (const line of headerLines) {
             const match = line.trim().match(/^t([\d.]+)$/);
             if (match) {
@@ -918,6 +951,13 @@ function init() {
             type: 'vectorize',
             raster,
             turdSize: getTurdSize(),
+            // Tone preparation, applied to the raster before any of the modes
+            // below see it - see getWhitePoint/getWarmth. The worker drops
+            // warmth itself on the colour path (tonePreparation.ts's
+            // preparationFor), so this sends what the user chose and lets the
+            // one rule live in one place.
+            whitePoint: getWhitePoint(),
+            warmth: getWarmth(),
             grayscaleLevels: getGrayscaleLevels(),
             // Multi-color raster separation (docs/multi-color.md section 1):
             // colorCount>=2 triggers k-means clustering (no fixed palette -
@@ -1142,9 +1182,9 @@ function init() {
         worker.postMessage(renderRequest);
     }
 
-    const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox'];
+    const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox', 'whitePoint', 'warmth'];
 
-    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod";
+    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth";
 
     $(SETTINGS_CONTROL_SELECTOR).on('input change', function() {
         // A control the smart defaults may have pre-set was just changed by
@@ -1191,11 +1231,14 @@ function init() {
         const mode = getColorMode();
         $("#grayscaleOptions").toggle(mode === 'grayscale');
         $("#multiColorOptions").toggle(mode === 'multi');
+        $("#warmthControl").toggle(mode !== 'multi');
     });
 
     $("#hueGroupingCheckbox").on('change', function() {
         $("#hueGroupingOptions").toggle($(this).is(":checked"));
     });
+
+    $("#whitePoint,#warmth").on('input change', updateToneReadouts);
 
     $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
     // The drawing's box changes with the window and when the preview is
@@ -1229,6 +1272,9 @@ function init() {
 
     $("#pathTracing").click(async function() {
         $("label[for='turdSize'],#turdSize").hide();
+        // A vector SVG has no photographed paper to lift and no colour the
+        // tracer is about to throw away, so neither tone control applies.
+        $("#toneControls").hide();
         $("#colorModeGrayscaleOption").hide();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").show();
 
@@ -1250,6 +1296,7 @@ function init() {
         }
         $("#grayscaleLevels").val(3);
         $("label[for='turdSize'],#turdSize").show();
+        $("#toneControls").show();
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2231,6 +2278,33 @@ function getTurdSize() {
     return parseInt($("#turdSize").val());
 }
 
+// Tone preparation (tsc/src/tonePreparation.ts): what the pipeline draws
+// FROM, decided before anything quantizes or traces. Both read as undefined
+// at their resting values rather than as 1 and 0, so a render that wants
+// neither sends neither and the worker's needsPreparation() check skips the
+// copy entirely - an image nobody has touched these for traces exactly as it
+// did before they existed.
+function getWhitePoint() {
+    const value = parseFloat($("#whitePoint").val());
+    return Number.isFinite(value) && value < 1 ? value : undefined;
+}
+
+function getWarmth() {
+    const value = parseFloat($("#warmth").val());
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+// Both sliders carry their value in their own label. The rationale underneath
+// explains the recommendation, but it goes stale the moment the user drags,
+// and "what did I just set it to" is the question a percentage answers.
+function updateToneReadouts() {
+    const whitePoint = parseFloat($("#whitePoint").val());
+    $("#whitePointValue").text(Number.isFinite(whitePoint) ? `${Math.round(whitePoint * 100)}%` : '');
+
+    const warmth = parseFloat($("#warmth").val());
+    $("#warmthValue").text(!Number.isFinite(warmth) || warmth <= 0 ? 'off' : `${Math.round(warmth * 100)}%`);
+}
+
 // Request-level default fill strategy (RenderSVGRequest.fillMethod,
 // tsc/src/types.ts) - see the #fillMethod <select>'s options for the
 // registered strategy names (fillStrategies/registry.ts). The worker's
@@ -2255,6 +2329,10 @@ function setColorMode(mode) {
     $(`input[name='colorMode'][value='${mode}']`).prop("checked", true);
     $("#grayscaleOptions").toggle(mode === 'grayscale');
     $("#multiColorOptions").toggle(mode === 'multi');
+    // Warmth is dropped by the worker on the colour path (see #warmthControl
+    // in index.html), so the control goes with it rather than sitting there
+    // doing nothing.
+    $("#warmthControl").toggle(mode !== 'multi');
 }
 
 function getGrayscaleLevels() {
@@ -2379,6 +2457,14 @@ function applySmartDefaults(recommendations) {
     $("#colorCount").val(clampColorCountOption(recommendations.colorCount.value));
     showRationale('#colorCountRationale', recommendations.colorCount.rationale);
 
+    $("#whitePoint").val(recommendations.whitePoint.value);
+    showRationale('#whitePointRationale', recommendations.whitePoint.rationale);
+
+    $("#warmth").val(recommendations.warmth.value);
+    showRationale('#warmthRationale', recommendations.warmth.rationale);
+
+    updateToneReadouts();
+
     $("#hueGroupingCheckbox").prop("checked", recommendations.hueGrouping.value);
     $("#hueGroupingOptions").toggle(recommendations.hueGrouping.value);
     showRationale('#hueGroupingRationale', recommendations.hueGrouping.rationale);
@@ -2443,6 +2529,14 @@ async function runProcessingEstimate() {
             hueGrouping: getHueGroupingEnabled(),
             flattenPaths: getFlattenPaths(),
             grayscaleLevels: getGrayscaleLevels() || undefined,
+            // Sent as real numbers rather than through getWhitePoint/
+            // getWarmth, whose undefined-at-rest convention means "leave the
+            // image alone" to the renderer but "use the recommendation" to
+            // the estimator. A user who has deliberately dragged the white
+            // point back to 100% must get an estimate for the render they
+            // will actually get.
+            whitePoint: getWhitePoint() ?? 1,
+            warmth: getWarmth() ?? 0,
         };
         const result = await estimateInWorker(currentRaster, options);
         lastEstimate = result;

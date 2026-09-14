@@ -38,7 +38,14 @@ will make — not a filter, the real command file rendered back. Before you
 commit, it tells you how long the machine will take, how many pen lifts that
 includes, and roughly how much of a Sharpie it will use.
 
-<img src="images/screens/preview.png" width="700" alt="The drawing preview: plot size, time estimate, fill style, infill density, despeckle and colour mode controls">
+<img src="images/screens/preview.png" width="700" alt="The drawing preview: plot size, time estimate, paper brightness, colour filter, fill style, infill density, despeckle and colour mode controls">
+
+Every setting arrives already set for the image in front of you, with the
+reason written underneath it — including the two that decide what gets drawn
+from in the first place: which brightness counts as bare paper (a photograph of
+a page has no true white in it, so without this the background traces as ink),
+and how hard to darken warm colours against cool ones before the image becomes
+tone.
 
 Settings changes don't silently re-render — the preview is marked out of date
 and you choose when to redo it, because a dense render on a phone takes real
@@ -84,9 +91,10 @@ trapping gap so two pens never touch, and hue grouping so a two-blue image needs
 one blue pen at two hatch densities rather than two pens.
 → [docs/mark-making.md](docs/mark-making.md), [docs/multi-color.md](docs/multi-color.md)
 
-**Seven fill styles** instead of one — cross-hatch, single-direction, angled,
-jittered, spiral, contour, and a gradient hatch that follows the image's own
-shading like an engraving. → [docs/mark-making.md](docs/mark-making.md)
+**Eight fill styles** instead of one — cross-hatch, single-direction, angled,
+jittered, spiral, contour, a gradient hatch that follows the image's own
+shading like an engraving, and a loop scribble that shades the way a biro
+does. → [docs/mark-making.md](docs/mark-making.md)
 
 **Photographs**, traced directly rather than via a vector detour.
 

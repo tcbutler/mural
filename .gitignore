@@ -11,6 +11,8 @@ tsc/svgs/*
 tsc/out
 .DS_Store
 .vscode/c_cpp_properties.json
+__pycache__/
+*.pyc
 
 # Host-side kinematics harness binary (see test/host/parity_test.cpp).
 test/host/parity_test

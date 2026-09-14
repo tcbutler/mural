@@ -178,6 +178,24 @@ export namespace RequestTypes {
         type: 'vectorize',
         raster: ImageData,
         turdSize: number,
+        // Tone preparation (tonePreparation.ts), applied to `raster` before
+        // any quantization or tracing so every mode below sees the same
+        // prepared image. Both omitted preserves existing behaviour exactly.
+        //
+        // Luminance to treat as bare paper; 1 or omitted leaves the image
+        // alone. A photograph of a page has no true white in it - the paper
+        // meters as a mid grey - so without this the whole background traces
+        // as ink.
+        whitePoint?: number,
+        // Red-minus-blue to subtract from luminance before the image is
+        // reduced to tone; 0 or omitted leaves it alone. For a subject that
+        // differs from its background in hue but not in brightness, a plain
+        // grey conversion loses it entirely.
+        //
+        // Ignored on the colorCount path on purpose: that path separates by
+        // hue and still has the colour, so the filter has nothing to recover
+        // and would only flatten what it is about to separate.
+        warmth?: number,
         // When set to a positive number (3 or 4 are supported), the vectorizer
         // quantizes luminance into that many nested levels and traces each one
         // separately instead of the default 1-bit threshold. Omitted, zero, or

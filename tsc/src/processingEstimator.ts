@@ -283,6 +283,28 @@ export const INFILL_US_PER_SEGMENT_AT_BASE_SPACING: Record<FillStrategyName, num
     spiral: 286,
     gradientHatch: 350,
     contour: 344,
+    // MEASURED 2026-09-14, but RELATIVE rather than absolute: the reference
+    // machine's fixture set (SVG_Logo.svg) was not to hand, so cycloid was
+    // timed against crossHatch45 on the same geometries in the same run - a
+    // traced horse (one big shape) and the scattered-squares SVG (fourteen
+    // small ones) at 300mm and 900mm x densities 1/3/5 - and the ratio
+    // applied to crossHatch45's own calibrated 30 above. Ratios ran 0.2x to
+    // 1.9x, median 0.9x.
+    //
+    // That spread is not noise, it is the model creaking: cycloid's real cost
+    // tracks DRAWN LENGTH (it samples the stroke roughly every millimetre and
+    // clips the row against the shape), where the per-segment formula assumes
+    // cost tracks segment COUNT, and a cycloid segment is a long looping
+    // polyline rather than a straight line. So the ratio climbs with size and
+    // density. Pinned near the top of the measured range rather than at the
+    // median, because a big dense render is the one the estimate is there to
+    // warn about, and a small one is tens of milliseconds either way.
+    //
+    // Left alone when cycloidPath.ts stopped sampling loops at a fixed angle:
+    // that cuts the point count at the dense end, where this was measured, so the
+    // number is now conservative there rather than wrong - and conservative is
+    // the direction this one was already chosen for.
+    cycloid: 55,
 };
 export const INFILL_BASE_SPACING_MM = 10; // density level 3 - the coefficients above are calibrated at this spacing
 

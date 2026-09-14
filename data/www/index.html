@@ -304,6 +304,37 @@
             </div>
             <div id="plottingEstimateSummary" class="mb-2 text-start" style="display:none;"></div>
 
+            <!-- Tone preparation (tsc/src/tonePreparation.ts). Everything
+                 below this pair decides HOW to draw the image; these two
+                 decide what the image even is, which is why they sit first.
+                 Both rest at a no-op, and smartDefaults.ts recommends a value
+                 per image (applySmartDefaults in main.js) with the reason
+                 shown underneath. Raster sources only - a vector SVG has no
+                 photographed paper and no colour to filter. -->
+            <div id="toneControls">
+              <label for="whitePoint" class="form-label mb-0">Paper brightness <span class="tone-readout" id="whitePointValue">100%</span>
+                <details class="info" name="muralInfo"><summary>i</summary>
+                  <div class="info-panel">Paper brightness is the brightness that counts as bare paper. A photograph of a page has no true white in it &mdash; metered for the room, the paper comes back a mid grey &mdash; so the whole background traces as ink. Drop this to what the paper actually measures and it stays blank. At 100% the image is left alone.</div>
+                </details>
+              </label>
+              <input type="range" class="form-range mb-2 text-center" min="0.4" max="1" step="0.01" id="whitePoint" value="1">
+              <div id="whitePointRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
+
+              <!-- Hidden in multi-colour mode, mirroring preparationFor()'s own
+                   rule: that path separates BY hue and still has the colour, so
+                   the filter has nothing to recover and would flatten the very
+                   distinction about to be drawn. -->
+              <div id="warmthControl">
+                <label for="warmth" class="form-label mb-0">Colour filter <span class="tone-readout" id="warmthValue">off</span>
+                  <details class="info" name="muralInfo"><summary>i</summary>
+                    <div class="info-panel">The colour filter darkens warm colours against cool ones before the image becomes grey, the way a coloured lens filter does for black-and-white film. Use it when the subject and its background are different colours at the same brightness &mdash; a ginger cat against a green hedge &mdash; which plain grey turns into a hole in the picture. At 0 the image converts as it is.</div>
+                  </details>
+                </label>
+                <input type="range" class="form-range mb-2 text-center" min="0" max="1" step="0.05" id="warmth" value="0">
+                <div id="warmthRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
+              </div>
+            </div>
+
             <label for="fillMethod" class="form-label mb-0">Fill style
               <details class="info" name="muralInfo"><summary>i</summary>
                 <div class="info-panel">
@@ -313,7 +344,8 @@
                   <b>Jittered cross-hatch</b> &mdash; hand-drawn, slightly irregular grid; a bit slower.<br>
                   <b>Spiral</b> &mdash; one continuous spiral stroke, fewest pen-lifts, best on rounded shapes.<br>
                   <b>Gradient hatch</b> &mdash; hatching follows the image's own shading, like an engraving; most expensive.<br>
-                  <b>Contour</b> &mdash; concentric outline rings, topographic-map look; fairly expensive.
+                  <b>Contour</b> &mdash; concentric outline rings, topographic-map look; fairly expensive.<br>
+                  <b>Loop scribble</b> &mdash; rows of continuous loops, like shading with a biro; about the same ink as the default cross-hatch, arranged differently; expensive.
                 </div>
               </details>
             </label>
@@ -329,6 +361,7 @@
               <option value="spiral">Spiral &mdash; one continuous spiral stroke, fewest pen-lifts, best on rounded shapes</option>
               <option value="gradientHatch">Gradient hatch &mdash; hatching follows the image's own shading, like an engraving; most expensive</option>
               <option value="contour">Contour &mdash; concentric outline rings, topographic-map look; fairly expensive</option>
+              <option value="cycloid">Loop scribble &mdash; rows of continuous loops, like shading with a biro; same ink as the default, arranged differently; expensive</option>
             </select>
             <div id="fillMethodRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
 

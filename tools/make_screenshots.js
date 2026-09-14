@@ -14,7 +14,11 @@
  *
  *   node tools/make_screenshots.js            # all screens
  *   node tools/make_screenshots.js --only preview
+ *   node tools/make_screenshots.js --image images/foo.jpg
  *   node tools/make_screenshots.js --keep     # leave Chrome and the mock running
+ *
+ * CHROME_PATH overrides where Chrome is, for a machine that keeps it
+ * somewhere other than a Mac's /Applications.
  */
 
 const { spawn } = require('child_process');
@@ -25,11 +29,13 @@ const ROOT = path.join(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'images', 'screens');
 const MOCK_PORT = 8123;
 const CDP_PORT = 9222;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Overridable, because the same script is useful from a Linux CI box or a
+// container that has Chromium somewhere else entirely.
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const VIEWPORT = { width: 1180, height: 900 };
 // A phone, to show the layout people actually use at the machine.
 const PHONE = { width: 414, height: 860 };
-const DEMO_IMAGE = 'images/style-examples/source.png';
+const DEFAULT_DEMO_IMAGE = 'images/style-examples/source.png';
 
 function arg(name, fallback) {
     const idx = process.argv.indexOf(`--${name}`);
@@ -37,6 +43,10 @@ function arg(name, fallback) {
         ? process.argv[idx + 1] : fallback;
 }
 const only = arg('only', null);
+// The README's screens use the standard test card; --image points the same
+// flow at anything else, which is how a control that only fires on certain
+// images gets looked at.
+const DEMO_IMAGE = arg('image', DEFAULT_DEMO_IMAGE);
 const keep = process.argv.includes('--keep');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

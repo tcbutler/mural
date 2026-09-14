@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { assertPenStatesAlternate } from "./fixtures";
 import type { Command, RequestTypes } from "../src/types";
 import { DEFAULT_NIB_WIDTH_MM } from "../src/huePalette";
+import { COMMAND_FILE_VERSION_LINE, decodeCommandFile } from "../src/commandFile";
 
 process.env.server = "1";
 
@@ -118,15 +119,19 @@ if (!paperAvailable) {
         const request = svgToRequest(twoColorSvg, paper, { colorSeparation: true });
         const result = await renderSvgJsonToCommands(request, noopStatus);
 
-        // Header order: d, h, t, n1, n2, then layer 1's commands, c2, layer 2's commands.
-        assert.match(result.commands[0], /^d[\d.]+$/);
-        assert.match(result.commands[1], /^h\d+$/);
-        assert.match(result.commands[2], /^t\d+$/);
-        assert.strictEqual(result.commands[3], "n1 Color 1");
-        assert.strictEqual(result.commands[4], "n2 Color 2");
+        // Header order: v2, d, h, t, n1, n2, then layer 1's commands, c2,
+        // layer 2's commands. The version line comes first so firmware that
+        // predates relative coordinates refuses the file outright instead of
+        // reading every step as a position (see commandFile.ts).
+        assert.strictEqual(result.commands[0], COMMAND_FILE_VERSION_LINE);
+        assert.match(result.commands[1], /^d[\d.]+$/);
+        assert.match(result.commands[2], /^h\d+$/);
+        assert.match(result.commands[3], /^t\d+$/);
+        assert.strictEqual(result.commands[4], "n1 Color 1");
+        assert.strictEqual(result.commands[5], "n2 Color 2");
 
         const c2Index = result.commands.indexOf("c2");
-        assert.ok(c2Index > 4, "expected a c2 boundary marker after the headers");
+        assert.ok(c2Index > 5, "expected a c2 boundary marker after the headers");
         // Only one boundary marker for 2 colors (N-1).
         assert.strictEqual(result.commands.filter((c) => /^c\d+$/.test(c)).length, 1);
 
@@ -158,15 +163,20 @@ if (!paperAvailable) {
         // toCommands.ts) - derive expected ranges from that ratio instead of
         // hardcoding mm values, so this stays correct if WIDTH/the fixture
         // rects ever change.
+        //
+        // Coordinates are written as a step from the previous point
+        // (commandFile.ts), so a slice of the raw lines cannot be read on its
+        // own - decode the whole file first, then split it at the same
+        // boundary.
         const ratio = request.width / request.svgWidth;
-        const coordRe = /^(-?[\d.]+) (-?[\d.]+)$/;
-        const xsOf = (cmds: Command[]) => (cmds as unknown as string[])
-            .map((c) => coordRe.exec(c))
-            .filter((m): m is RegExpExecArray => m !== null)
-            .map((m) => parseFloat(m[1]));
+        const decoded = decodeCommandFile(result.commands);
+        const decodedC2 = decoded.indexOf("c2");
+        const xsOf = (cmds: Command[]) => cmds
+            .filter((c): c is { x: number; y: number } => typeof c !== "string")
+            .map((c) => c.x);
 
-        const layer1Xs = xsOf(layer1Commands);
-        const layer2Xs = xsOf(layer2Commands);
+        const layer1Xs = xsOf(decoded.slice(0, decodedC2));
+        const layer2Xs = xsOf(decoded.slice(decodedC2 + 1));
         assert.ok(layer1Xs.length > 0 && layer2Xs.length > 0, "expected coordinate commands in both layers");
 
         // Yellow rect: SVG x in [5, 35]. Blue rect: SVG x in [140, 170]. Give
@@ -200,8 +210,8 @@ if (!paperAvailable) {
         });
         const result = await renderSvgJsonToCommands(request, noopStatus);
 
-        assert.strictEqual(result.commands[3], "n1 Sunshine");
-        assert.strictEqual(result.commands[4], "n2 Ocean");
+        assert.strictEqual(result.commands[4], "n1 Sunshine");
+        assert.strictEqual(result.commands[5], "n2 Ocean");
     });
 
     test("multicolor raster: vectorizeImageDataColor orders masks/palette light-to-dark, matching the yellow/blue geometry", () => {
@@ -393,21 +403,22 @@ if (!paperAvailable) {
     // of re-deriving it per test.
     const HEADER_COMMAND_COUNT = 5;
 
+    // Decoded before splitting: a coordinate line is a step from the point
+    // before it (commandFile.ts), so a slice of the raw lines cannot be read
+    // on its own. Decoding also drops the version line, which is why the
+    // header count above still holds afterwards.
     function splitTwoLayers(commands: Command[]): { layer1: Command[]; layer2: Command[] } {
-        const c2Index = commands.indexOf("c2" as unknown as Command);
+        const decoded = decodeCommandFile(commands as unknown as string[]);
+        const c2Index = decoded.indexOf("c2" as unknown as Command);
         assert.ok(c2Index > HEADER_COMMAND_COUNT - 1, "expected a c2 boundary marker after the headers");
         return {
-            layer1: commands.slice(HEADER_COMMAND_COUNT, c2Index),
-            layer2: commands.slice(c2Index + 1),
+            layer1: decoded.slice(HEADER_COMMAND_COUNT, c2Index),
+            layer2: decoded.slice(c2Index + 1),
         };
     }
 
-    const coordRe = /^(-?[\d.]+) (-?[\d.]+)$/;
     function coordsOf(cmds: Command[]): { x: number; y: number }[] {
-        return (cmds as unknown as string[])
-            .map((c) => coordRe.exec(c))
-            .filter((m): m is RegExpExecArray => m !== null)
-            .map((m) => ({ x: parseFloat(m[1]), y: parseFloat(m[2]) }));
+        return cmds.filter((c): c is { x: number; y: number } => typeof c !== "string");
     }
 
     // Minimum Euclidean distance between any point of `a` and any point of
@@ -616,8 +627,15 @@ if (!paperAvailable) {
         // interaction could make it depend on green's presence anyway) -
         // extract each layer's command block by its n<index> header and
         // compare byte-for-byte.
-        function layerBlock(commands: string[], name: string): string[] {
-            const nIndex = commands.findIndex((c) => c.startsWith(`n`) && c.endsWith(` ${name}`));
+        // Compared after decoding, on absolute coordinates. The lines
+        // themselves are steps from the point before them (commandFile.ts),
+        // so removing a layer changes how the NEXT layer's first point is
+        // written without moving it - a byte comparison of the raw lines
+        // would report a difference that does not exist on the paper.
+        function layerBlock(rawCommands: string[], name: string): Command[] {
+            const commands = decodeCommandFile(rawCommands);
+            const isMarker = (c: Command, prefix: string) => typeof c === "string" && c.startsWith(prefix);
+            const nIndex = commands.findIndex((c) => isMarker(c, "n") && (c as string).endsWith(` ${name}`));
             assert.ok(nIndex >= 0, `expected an n<index> header for ${name}`);
             // Layer commands run from just after the last n<index> header to
             // the next c<index>/end-of-array boundary. Since header order is
@@ -625,14 +643,15 @@ if (!paperAvailable) {
             // between boundaries, locate this layer's own start/end by its
             // position among all c<index> boundaries instead of re-deriving
             // header count.
+            const isPalette = (c: Command) => typeof c === "string" && /^n\d+ /.test(c);
             const cIndexes = commands.reduce<number[]>((acc, c, i) => {
-                if (/^c\d+$/.test(c)) acc.push(i);
+                if (typeof c === "string" && /^c\d+$/.test(c)) acc.push(i);
                 return acc;
             }, []);
-            const nHeaderCount = commands.filter((c) => /^n\d+ /.test(c)).length;
-            const layerStartsAt = [commands.findIndex((c) => /^n\d+ /.test(c)) + nHeaderCount, ...cIndexes.map((i) => i + 1)];
+            const nHeaderCount = commands.filter(isPalette).length;
+            const layerStartsAt = [commands.findIndex(isPalette) + nHeaderCount, ...cIndexes.map((i) => i + 1)];
             const layerEndsAt = [...cIndexes, commands.length];
-            const layerNumber = parseInt(commands[nIndex].match(/^n(\d+) /)![1], 10);
+            const layerNumber = parseInt((commands[nIndex] as string).match(/^n(\d+) /)![1], 10);
             return commands.slice(layerStartsAt[layerNumber - 1], layerEndsAt[layerNumber - 1]);
         }
 
@@ -656,7 +675,7 @@ if (!paperAvailable) {
         assert.strictEqual((result as any).layers, undefined);
         assert.strictEqual(result.distance, 0);
         assert.strictEqual(result.drawDistance, 0);
-        assert.match(result.commands[0], /^d0(\.0)?$/);
+        assert.match(result.commands[1], /^d0(\.0)?$/);
 
         const plotting = (result as any).plotting;
         assert.strictEqual(plotting.penSwapCount, 0);

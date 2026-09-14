@@ -24,7 +24,8 @@ export type FillStrategyName =
     | 'jitteredHatch'
     | 'spiral'
     | 'gradientHatch'
-    | 'contour';
+    | 'contour'
+    | 'cycloid';
 
 export const FILL_STRATEGY_NAMES: FillStrategyName[] = [
     'crossHatch45',
@@ -34,4 +35,5 @@ export const FILL_STRATEGY_NAMES: FillStrategyName[] = [
     'spiral',
     'gradientHatch',
     'contour',
+    'cycloid',
 ];
