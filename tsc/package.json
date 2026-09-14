@@ -4,7 +4,7 @@
   "description": "",
   "main": "main.js",
   "scripts": {
-    "build": "webpack --mode=production --node-env=production",
+    "build": "webpack --mode=production",
     "pretest": "tsc -p tsconfig.test.json",
     "test": "node --test dist-test/test/*.test.js",
     "bench": "tsc -p tsconfig.test.json && node dist-test/bench/runBenchmarks.js"
@@ -21,6 +21,7 @@
     "clean-webpack-plugin": "^4.0.0",
     "copy-webpack-plugin": "^11.0.0",
     "declaration-bundler-webpack-plugin": "^1.0.3",
+    "less": "^4.9.1",
     "ts-loader": "^9.5.1",
     "typescript": "5.0.4",
     "webpack": "^5.89.0",

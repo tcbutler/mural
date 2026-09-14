@@ -4,6 +4,7 @@
 #include "tasks/task.h"
 #include "pen.h"
 #include "display.h"
+#include "statusled.h"
 #include "LittleFS.h"
 #include <ESPAsyncWebServer.h>
 class PenSwapTask;
@@ -42,6 +43,7 @@ class Runner {
     Movement *movement;
     Pen *pen;
     Display *display;
+    StatusLed *statusLed;
     AsyncEventSource *events = nullptr;
     unsigned long lastEventMillis = 0;
     bool initTaskProvider();
@@ -49,11 +51,16 @@ class Runner {
     Task* currentTask;
     bool stopped;
     File openedFile;
-    double totalDistance;
+    // Zeroed rather than left indeterminate. Before any plot has run, the SSE
+    // onConnect handler still builds a progress payload from these - measured on a
+    // freshly booted device, that reported executedLines 1081588121 and totalLines
+    // -1717986918 to the UI. Same class of bug as the uninitialised
+    // Movement::Point that pegged progress at 100%.
+    double totalDistance = 0;
     Movement::Point targetPosition;
-    int progress;
-    int totalLines;
-    int executedLines;
+    int progress = 0;
+    int totalLines = 0;
+    int executedLines = 0;
     Task *finishingSequence[1];
     int sequenceIx = 0;
 
@@ -75,7 +82,54 @@ class Runner {
     // NVS checkpoint write cadence: every N lines (to limit flash wear) and, in
     // addition, on every pen up/down line regardless of N (see getNextTask()).
     static const int checkpointIntervalLines = 20;
-    void writeCheckpoint(uint32_t offset);
+
+    // Checkpoints are captured in RAM the moment they come due and only written
+    // to NVS when the pen is up - see flushCheckpointIfPenUp() for why. The
+    // captured values are the state at the line that came due, not at flush
+    // time, so deferring the write does not change what a resume restores.
+    Checkpoint pendingWrite;
+    bool pendingWriteValid = false;
+    void captureCheckpoint(uint32_t offset);
+    void flushCheckpointIfPenUp();
+    void writeCheckpoint(const Checkpoint& checkpoint);
+
+    // Longest single blocking stretch inside a checkpoint write this run, in
+    // milliseconds. Diagnostic: an NVS write is normally a few ms, but when the
+    // page fills the driver has to erase, and loop() - and so step generation -
+    // is stopped for all of it. Reported over SSE so a stall can be measured
+    // rather than guessed at.
+    unsigned long maxCheckpointBlockMs = 0;
+
+    // --- Time-weighted progress ------------------------------------------
+    //
+    // Progress used to be executedLines/totalLines, which is a poor stand-in for
+    // how far through a plot you are: a 400mm infill sweep and a 2mm hop are one
+    // line each, and pen-up travel runs 3x faster than pen-down drawing
+    // (moveSpeedSteps vs printSpeedSteps). The result crawled through dense
+    // areas and then leapt at the end.
+    //
+    // These hold an estimate of the plot's total duration and how much of it is
+    // done, both in seconds, so `percent` tracks elapsed plotting time instead.
+    // The estimate does not need to predict wall-clock accurately - only to be
+    // proportional to the real thing, since it is used as a ratio.
+    double totalEstimatedSeconds = 0;
+    double completedSeconds = 0;
+    // Cost of the task currently in flight. Credited to completedSeconds only
+    // once that task reports isDone(), which is also what stops the last line of
+    // a plot from reading 100% while it is still being drawn.
+    double pendingTaskSeconds = 0;
+
+    struct PlotEstimate {
+        int lines = 0;
+        double totalSeconds = 0;
+        // Seconds of work before `offset`, for restoring progress on resume.
+        double secondsBeforeOffset = 0;
+    };
+    // Walks the command lines from the current file position to EOF, summing the
+    // estimated duration. Leaves the file positioned at EOF; callers seek back.
+    void scanPlot(Movement::Point startPosition, uint32_t offset, PlotEstimate& out);
+    double estimateSegmentSeconds(Movement::Point from, Movement::Point to, bool penDown) const;
+    int computePercent() const;
 
     const char* getStateName();
     void pushProgressEvent(bool force, const char* stateOverride = nullptr);
@@ -126,7 +180,7 @@ class Runner {
     // generic "Not ready". Empty when no specific reason was recorded.
     String lastError;
 
-    Runner(Movement *movement, Pen *pen, Display *display);
+    Runner(Movement *movement, Pen *pen, Display *display, StatusLed *statusLed);
     bool start();
     void run();
     void dryRun();
@@ -140,6 +194,10 @@ class Runner {
     // docs/multi-color.md section 4) - also used by /pauseDrawing, /resumeDrawing,
     // and (once TMC UART stall detection is enabled) automatically on a stall.
     void pause();
+    // Abandons the current plot: lifts the pen, stops feeding commands, and
+    // clears the checkpoint so the job is not offered for resume afterwards.
+    // Only meaningful while paused - see PhaseManager/DrawingPhase.
+    bool cancelRun();
     void resumeRun();
     bool isPaused();
 

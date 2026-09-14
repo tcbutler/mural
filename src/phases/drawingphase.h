@@ -15,6 +15,7 @@ class DrawingPhase : public NotSupportedPhase {
     public:
     DrawingPhase(PhaseManager* manager, Runner* runner);
     void pauseDrawing(AsyncWebServerRequest *request);
+    void cancelDrawing(AsyncWebServerRequest *request);
     void resumeDrawing(AsyncWebServerRequest *request);
     // Multi-color (docs/multi-color.md sections 2-4). setPenDistance() only
     // applies while a pen swap is pending (Runner::isAwaitingPenSwap()) -

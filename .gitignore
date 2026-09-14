@@ -1,5 +1,7 @@
 .pio
 data/www/worker/*
+# Compiled from styles/dpad.less by build.py
+data/www/dpad.css
 tsc/node_modules
 tsc/package-lock.json
 tsc/dist
@@ -11,3 +13,6 @@ tsc/out
 .vscode/c_cpp_properties.json
 __pycache__/
 *.pyc
+
+# Host-side kinematics harness binary (see test/host/parity_test.cpp).
+test/host/parity_test

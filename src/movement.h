@@ -153,6 +153,8 @@ private:
     // Values derived from the physics constants above.
     double circumference;   // [mm] = diameter * PI
     int homedStepsOffset;   // [steps]
+    // True while drive current is cut so the belts can be pulled by hand.
+    bool motorsReleased = false;
 
     long lastEstepsCalibrationSteps = 0; // Steps commanded by the last extend1000mm() call, used to
                                           // convert a user-measured travel distance back into diameter.
@@ -171,6 +173,13 @@ public:
             this->y = y;
         }
         Point() {
+            // Zero rather than indeterminate. A default-constructed Point used to
+            // carry uninitialised doubles, which was harmless while it was only
+            // ever written before being read - and stopped being harmless as soon
+            // as Runner started reading targetPosition as the PREVIOUS position
+            // to measure each move against.
+            this->x = 0;
+            this->y = 0;
         }
     };
 
@@ -204,11 +213,31 @@ public:
     void runSteppers();
     bool beginLinearTravel(double x, double y, int speed, float& moveTime);
 
+    // Estimated seconds to cover `distanceMm` at `speedSteps` steps/s, using the
+    // calibrated pulley circumference rather than the compiled-in default.
+    // Approximate by construction - belt speed only equals pen speed along the
+    // belt direction - so this is for weighting progress, not motion planning.
+    double estimateTravelSeconds(double distanceMm, int speedSteps) const;
+
     // Used for calibration of the esteps.
     void extend1000mm();
 
     Point getHomeCoordinates();
     void disableMotors();
+
+    // Belt-retraction helper: cut drive current so the belts can be pulled in by
+    // hand, then restore it to finish precisely under motor control.
+    //
+    // Careful with AccelStepper's naming here - it is inverted relative to the
+    // physical effect on this hardware. The TMC2209's EN input is active-LOW and
+    // _enableInverted is never set, so AccelStepper::disableOutputs() writes EN
+    // LOW and ENERGISES the driver, while enableOutputs() writes EN HIGH and
+    // releases it. That is why the constructor "disables" both motors to make
+    // them hold, and why nothing in this file ever calls enableOutputs(). These
+    // two wrappers are named for what actually happens to the motors.
+    void releaseMotors();
+    void holdMotors();
+    bool areMotorsReleased() const { return motorsReleased; }
 
     // Runtime-configurable physics constants (see KinematicModel.md).
     double getMassBot();

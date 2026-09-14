@@ -149,6 +149,47 @@ main.form-signin {
   text-transform: uppercase;
 }
 
+/* Numbered sub-steps within a single screen. Used where a screen is really a
+   short sequence of physical actions rather than one - the retract-belts screen
+   otherwise listed every instruction at the top and pooled every control at the
+   bottom, leaving you to map one onto the other. */
+.substep {
+  border-left: var(--border-w) solid var(--line);
+  padding-left: 14px;
+  margin-bottom: 28px;
+}
+
+.substep:last-of-type { margin-bottom: 16px; }
+
+.substep-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.substep-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border: var(--border-w) solid var(--ink);
+  background: var(--accent4);
+  font-size: 12px;
+  font-weight: 800;
+  flex: none;
+}
+
+.substep-hint {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
 .ui-topbar {
   display: flex;
   justify-content: space-between;
@@ -953,7 +994,11 @@ details.info .info-panel {
    nothing loses its state while zoomed. */
 .two-col:has(.zoom-toggle:checked) .col-controls,
 .muralSlide:has(.zoom-toggle:checked) .estimate-banner,
-.muralSlide:has(.zoom-toggle:checked) .slide-actions {
+.muralSlide:has(.zoom-toggle:checked) .slide-actions,
+/* The cog is fixed to the same corner as Close, so the two overlapped once
+   Close was pinned to the viewport. It is not usable from a fullscreen preview
+   anyway. */
+.muralSlide:has(.zoom-toggle:checked) .tools-gear-btn {
   visibility: hidden;
 }
 
@@ -966,14 +1011,71 @@ body:has(.zoom-toggle:checked) {
 .zoom-toggle:checked ~ .preview-frame img {
   max-width: 96%;
   max-height: 96%;
+  /* Zoom is applied about the image's own centre by previewZoom.js. */
+  transform-origin: center center;
+  will-change: transform;
+  cursor: grab;
 }
+
+.zoom-toggle:checked ~ .preview-frame {
+  /* The image is transformed beyond its box once zoomed; clip it to the
+     fullscreen frame rather than letting it paint over the whole document. */
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* Current magnification, and the one-line reminder that the gestures exist.
+   Both only appear in the enlarged view. */
+.zoom-scale,
+.zoom-hint {
+  display: none;
+  position: absolute;
+  z-index: 6;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  padding: 6px 10px;
+  pointer-events: none;
+}
+
+.zoom-scale { top: 10px; left: 10px; }
+
+.zoom-hint {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zoom-toggle:checked ~ .preview-frame .zoom-scale,
+.zoom-toggle:checked ~ .preview-frame .zoom-hint { display: inline-flex; }
 
 /* .zoom-open lives nested inside .preview-frame (sibling of the image),
    not as a direct sibling of the checkbox, so it needs a descendant form
    of the sibling rule; .zoom-close is a direct sibling and uses the plain
    form. */
 .zoom-toggle:checked ~ .preview-frame .zoom-open { display: none; }
-.zoom-toggle:checked ~ .zoom-close { display: inline-flex; z-index: 1001; }
+/* Pinned to the viewport, not to .preview-box. The enlarged frame is
+   position:fixed, but this label is a sibling of it inside .preview-box, so it
+   was positioning against that box's place in the normal flow - leaving Close
+   floating in the middle of the enlarged image instead of in a corner. */
+.zoom-toggle:checked ~ .zoom-close {
+  display: inline-flex;
+  z-index: 1001;
+  position: fixed;
+  top: 10px;
+  right: 10px;
+}
 
 .zoom-open:focus-visible,
 .zoom-close:focus-visible {
@@ -1275,4 +1377,89 @@ dialog.mural-modal::backdrop {
 
 @media (min-width: 900px) {
   #errorAlertContainer { max-width: 620px; }
+}
+
+/* --- The original, alongside the drawing -----------------------------------
+ *
+ * Tweaking fill style, density and colour a few times is enough to lose track
+ * of what the image was, and the source screen is two steps back. A thumbnail
+ * here answers "what am I looking at" without leaving the preview.
+ */
+.source-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0 4px;
+}
+
+.source-thumb {
+    flex: 0 0 auto;
+    width: 76px;
+    height: 76px;
+    padding: 3px;
+    background: #fff;
+    border: 1px solid var(--rule, #d8d8d8);
+    border-radius: 4px;
+    cursor: zoom-in;
+    line-height: 0;
+}
+
+.source-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.source-row-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.source-overlay-switch {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.original-full {
+    display: block;
+    width: 100%;
+    height: auto;
+    /* A transparent PNG against the modal's own surface reads as whatever is
+       behind it; on white it looks like the paper will. */
+    background: #fff;
+}
+
+/* The original behind the drawing. Positioned by the same rules as the preview
+ * image inside .preview-frame, so the two register without alignment maths -
+ * both are contained in the same box and share the artwork's aspect ratio.
+ *
+ * Faded hard: this is a reference for where things sit, not a second picture
+ * competing with the strokes. Never a pointer target, or it would swallow the
+ * pinch and drag gestures that belong to the preview.
+ */
+/* The rendered preview is an opaque white PNG, so a picture behind it is simply
+ * covered - at any opacity. Multiplying the drawing over the original makes its
+ * white transparent while leaving the strokes black, which is what puts the two
+ * in the same space. Applied only while the overlay is on, so the normal preview
+ * is untouched. */
+.preview-frame.overlay-on .svg-preview {
+    mix-blend-mode: multiply;
+}
+
+.preview-ghost {
+    /* Box set in JS to the drawing's own box, not inset:0 on the frame. The
+       frame is taller and wider than the image it holds (529x474 against
+       513x293 when this was measured), so filling it and relying on
+       object-fit:contain leaves the two pictures centred in different
+       rectangles and out of register by ~86px vertically. */
+    position: absolute;
+    object-fit: contain;
+    opacity: 0.22;
+    pointer-events: none;
 }

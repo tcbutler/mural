@@ -4,6 +4,7 @@
 #include "movement.h"
 #include "pen.h"
 #include "runner.h"
+#include "netwatch.h"
 #include <ESPAsyncWebServer.h>
 class SvgSelectPhase;
 class RetractBeltsPhase;
@@ -18,7 +19,11 @@ class PhaseManager {
     Phase* beginDrawingPhase;
     Phase* drawingPhase;
     Phase* resumeDrawingPhase;
+    // Reported in the state document so the UI can show link health.
+    NetWatch* netWatch;
     Movement* movement;
+    // Kept so respondWithState can report the calibrated pen-holder geometry.
+    Pen* pen;
 
     // True from the moment a resumable checkpoint is offered (see reset()) until
     // either the offer is discarded or the resume flow hands off to the Drawing
@@ -30,7 +35,7 @@ class PhaseManager {
 
     public:
     enum PhaseNames {RetractBelts, SetTopDistance, ExtendToHome, PenCalibration, SvgSelect, BeginDrawing, Drawing, ResumeDrawing};
-    PhaseManager(Movement* movement, Pen* pen, Runner* runner);
+    PhaseManager(Movement* movement, Pen* pen, Runner* runner, NetWatch* netWatch);
     Phase* getCurrentPhase();
     void setPhase(PhaseNames name);
     void respondWithState(AsyncWebServerRequest *request);
@@ -41,6 +46,10 @@ class PhaseManager {
 
     bool isResuming();
     Runner::Checkpoint getPendingCheckpoint();
+    // Non-null when the last command-file upload failed - see
+    // SvgSelectPhase::handleUpload. Lets the upload's response handler report the
+    // failure instead of returning a state document that looks like success.
+    const char* getUploadError();
     void clearResuming();
 };
 #endif

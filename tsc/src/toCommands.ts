@@ -1,6 +1,7 @@
 import { Command, PaletteEntry, PathDensityData, RequestTypes, updateStatusFn } from './types';
 import { assignHatchAnglesPerColorGroup, ColorGroup, collectExistingColorGroups, generatePaths, groupPathsByLiteralColor } from './generator';
-import { generateInfills } from './infill';
+import { generateInfills, readGradientFieldTag } from './infill';
+import { SerializedGradientField } from './imageGradient';
 import { optimizePaths } from './optimizer';
 import { renderPathsToCommands } from './renderer';
 import { trimCommands } from './trimmer';
@@ -32,6 +33,13 @@ export async function renderSvgJsonToCommands(
 
     updateStatusFn("Importing");
     const svg = paper.project.importJSON(request.svgJson);
+
+    // Captured here, before anything restructures the tree: the gradient field
+    // (vectorizer.ts's withGradientField) rides on this imported item, and by
+    // the time generateInfills() runs it is no longer reachable from the
+    // project. gradientHatch silently fell back to crossHatch45 for every image
+    // while this was left to be rediscovered later.
+    const gradientField = readGradientFieldTag(svg);
 
     // scale the document so its coordinates match the world 1:1, in mm
     const projectToViewRatio = request.width / request.svgWidth;
@@ -78,7 +86,7 @@ export async function renderSvgJsonToCommands(
         : 0;
 
     if (colorGroups && survivingGroupCount > 1) {
-        return renderMultiColor(colorGroups, request, updateStatusFn);
+        return renderMultiColor(colorGroups, request, updateStatusFn, gradientField);
     }
 
     // Fewer than 2 layers survive (0 or 1, whether because the source was
@@ -99,7 +107,7 @@ export async function renderSvgJsonToCommands(
     }
 
     updateStatusFn("Generating infill");
-    const pathsWithInfills = generateInfills(pathsToRender, request.infillDensity, request.fillMethod);
+    const pathsWithInfills = generateInfills(pathsToRender, request.infillDensity, request.fillMethod, gradientField);
 
     updateStatusFn("Optimizing paths");
     const optimizedPaths = optimizePaths(pathsWithInfills, request.homeX, request.homeY);
@@ -150,6 +158,9 @@ async function renderMultiColor(
     colorGroups: ColorGroup[],
     request: RequestTypes.RenderSVGRequest,
     updateStatusFn: updateStatusFn,
+    // Captured by the caller off the imported item, before the render
+    // restructures the tree - see readGradientFieldTag's use above.
+    gradientField?: SerializedGradientField,
 ) {
     // Per-layer hatch angle (docs/multi-color.md; see that function's
     // header comment in generator.ts) - purely additive: it only sets
@@ -231,7 +242,7 @@ async function renderMultiColor(
 
     for (let i = 0; i < colorGroups.length; i++) {
         updateStatusFn(`Generating infill: layer ${i + 1}/${colorGroups.length}`);
-        const infilled = generateInfills(layerPathArrays[i], request.infillDensity, request.fillMethod);
+        const infilled = generateInfills(layerPathArrays[i], request.infillDensity, request.fillMethod, gradientField);
 
         updateStatusFn(`Optimizing paths: layer ${i + 1}/${colorGroups.length}`);
         const optimized = optimizePaths(infilled, request.homeX, request.homeY);

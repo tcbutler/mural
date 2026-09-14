@@ -28,6 +28,16 @@ jobs:
       - name: Install littlefs-python (for flash-budget gate)
         run: pip install littlefs-python
 
+      # build.py runs the TypeScript build and the Less compile as part of every
+      # firmware/filesystem build, so this job needs the node dependencies just
+      # as much as the TS job does. It never installed them: build.py used to
+      # ignore the exit status of `npm run build`, so a failing bundle step was
+      # silently skipped and the image was packed with no render worker in it -
+      # and the flash-budget gate measured that and passed.
+      - name: Install node dependencies
+        working-directory: tsc
+        run: npm install
+
       - name: Cache PlatformIO packages
         uses: actions/cache@v4
         with:
@@ -42,6 +52,33 @@ jobs:
 
       - name: Check flash-size budgets
         run: python tools/check_sizes.py
+
+  kinematics:
+    name: Host kinematics accuracy + parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pure-math host harness: no PlatformIO/Arduino toolchain needed. This was
+      # committed red and stayed red because nothing ran it; see the header comment
+      # in test/host/parity_test.cpp.
+      - name: Build and run kinematics harness
+        working-directory: test/host
+        run: |
+          g++ -std=c++17 -O2 -I../../src ../../src/kinematics.cpp parity_test.cpp -o parity_test
+          ./parity_test
+
+  mock-harness:
+    name: Mock firmware contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guards tools/mock_firmware.js against drifting away from the firmware's
+      # state document, phase names, endpoints and SSE payload. No toolchain
+      # needed - it parses src/ and starts the mock on a scratch port.
+      - name: Check mock firmware contract
+        run: node tools/mock_contract_test.js
 
   pipeline:
     name: TS pipeline

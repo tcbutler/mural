@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include <WiFiManager.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -11,6 +12,8 @@
 #include "runner.h"
 #include "pen.h"
 #include "display.h"
+#include "statusled.h"
+#include "netwatch.h"
 #include "phases/phasemanager.h"
 #include <stdexcept>
 
@@ -21,8 +24,29 @@ Movement *movement;
 Runner *runner;
 Pen *pen;
 Display *display;
+StatusLed *statusLed;
+NetWatch netWatch;
 
 PhaseManager* phaseManager;
+
+// index.html is served by hand rather than by serveStatic so it can carry its
+// own Cache-Control - see the serving comment in setup(). Registered for both
+// "/" and "/index.html", since either can be the URL someone lands on.
+void sendIndex(AsyncWebServerRequest *request) {
+    // build.py gzips every text asset into the image. serveStatic finds a ".gz"
+    // by itself and declares the encoding; beginResponse(fs, path) does not, so
+    // this has to do both. The uncompressed fallback keeps a hand-assembled or
+    // partially updated filesystem working.
+    AsyncWebServerResponse *response;
+    if (LittleFS.exists("/www/index.html.gz")) {
+        response = request->beginResponse(LittleFS, "/www/index.html.gz", "text/html");
+        response->addHeader("Content-Encoding", "gzip");
+    } else {
+        response = request->beginResponse(LittleFS, "/www/index.html", "text/html");
+    }
+    response->addHeader("Cache-Control", "no-cache");
+    request->send(response);
+}
 
 void notFound(AsyncWebServerRequest *request)
 {
@@ -70,6 +94,152 @@ void handleSetPhysicsConstants(AsyncWebServerRequest *request) {
     handleGetPhysicsConstants(request);
 }
 
+// --- Abandon setup and start again -----------------------------------------
+//
+// The phase machine only ever moves forward: each step corresponds to something
+// physical having happened (belts retracted, belts extended, pen calibrated), and
+// a single-step "back" is mostly incoherent - clicking a button cannot un-extend
+// a belt. Starting over IS coherent, because re-walking the wizard is exactly the
+// physical re-setup that going back would require anyway.
+//
+// PhaseManager::reset() already existed for this but was only reachable from
+// BeginDrawing ("Reset") and ResumeDrawing ("Discard and start over"), leaving
+// RetractBelts, ExtendToHome and PenCalibration with no way out at all.
+//
+// Refused while drawing: abandoning a plot mid-stroke is a different decision
+// with different consequences (the pen is on the wall), and the drawing screen
+// has pause/resume for that.
+void handleStartOver(AsyncWebServerRequest *request) {
+    if (strcmp(phaseManager->getCurrentPhase()->getName(), "Drawing") == 0) {
+        request->send(409, "text/plain", "Pause the drawing first");
+        return;
+    }
+
+    // Leave the pen somewhere safe: setup may have left it at the release angle
+    // (loading a pen) or partway through a contact-point calibration.
+    pen->setRawValue(pen->getHighestLocked());
+
+    phaseManager->reset();
+    phaseManager->respondWithState(request);
+}
+
+// --- Free the belts for manual retraction ----------------------------------
+//
+// With the belts fully extended - a machine that lost power and slumped down the
+// wall - the steppers hold hard enough that the belt cannot be pulled through by
+// hand, so retraction means jogging the entire length at motor speed. Cutting
+// drive current lets the slack be pulled in by hand, then restored to finish
+// under motor control.
+//
+// Restricted to the RetractBelts phase on purpose. Releasing the motors drops
+// whatever the belts are holding and loses any established position - during
+// RetractBelts nothing has been homed yet, so there is no position to lose, and
+// the machine is expected to be slack or supported. Anywhere later it would be a
+// way to make the bot fall off the wall.
+void handleSetMotorsFree(AsyncWebServerRequest *request) {
+    if (strcmp(phaseManager->getCurrentPhase()->getName(), "RetractBelts") != 0) {
+        request->send(409, "text/plain", "Motors can only be released while retracting the belts");
+        return;
+    }
+    if (!request->hasParam("free", true)) {
+        request->send(400, "text/plain", "Missing free");
+        return;
+    }
+
+    const String value = request->getParam("free", true)->value();
+    if (value == "1" || value == "true") {
+        movement->releaseMotors();
+    } else {
+        movement->holdMotors();
+    }
+
+    phaseManager->respondWithState(request);
+}
+
+// --- Pen holder calibration ------------------------------------------------
+//
+// Machine geometry rather than per-plot setup, so these are registered directly
+// here (like the physics constants above) instead of on a phase: the tools
+// panel that drives them is reachable from any screen, and Phase::setServo() is
+// only implemented by the handful of phases that expect a pen calibration step.
+
+void handleGetPenLimits(AsyncWebServerRequest *request) {
+    AsyncResponseStream *response = request->beginResponseStream("application/json");
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &root = jsonBuffer.createObject();
+    root["lowestLocked"] = pen->getLowestLocked();
+    root["highestLocked"] = pen->getHighestLocked();
+    root["unlocked"] = pen->getUnlockedAngle();
+    root["current"] = pen->getPenDistance();
+    root.printTo(*response);
+    request->send(response);
+}
+
+// Refuses while the machine is drawing or moving: jogging the servo mid-stroke
+// would drag the nib across the wall.
+static bool penCalibrationAllowed(AsyncWebServerRequest *request) {
+    if (movement->isMoving() ||
+        strcmp(phaseManager->getCurrentPhase()->getName(), "Drawing") == 0) {
+        request->send(409, "text/plain", "Busy - can't move the pen while drawing");
+        return false;
+    }
+    return true;
+}
+
+// Jogs the servo to a raw angle so the user can find the holder's limits by eye.
+// Deliberately unclamped by the stored limits: this is how new limits get found,
+// so clamping to the old ones would make a machine uncalibratable.
+void handlePenJog(AsyncWebServerRequest *request) {
+    if (!penCalibrationAllowed(request)) {
+        return;
+    }
+    if (!request->hasParam("angle", true)) {
+        request->send(400, "text/plain", "Missing angle");
+        return;
+    }
+    const int angle = request->getParam("angle", true)->value().toInt();
+    if (angle < 0 || angle > 180) {
+        request->send(400, "text/plain", "Angle must be 0-180");
+        return;
+    }
+    pen->setRawValue(angle);
+    request->send(200, "text/plain", "OK");
+}
+
+void handleSetPenLimits(AsyncWebServerRequest *request) {
+    if (!penCalibrationAllowed(request)) {
+        return;
+    }
+    if (!request->hasParam("lowestLocked", true) || !request->hasParam("highestLocked", true) ||
+        !request->hasParam("unlocked", true)) {
+        request->send(400, "text/plain", "Missing lowestLocked/highestLocked/unlocked");
+        return;
+    }
+
+    const int lowest = request->getParam("lowestLocked", true)->value().toInt();
+    const int highest = request->getParam("highestLocked", true)->value().toInt();
+    const int unlocked = request->getParam("unlocked", true)->value().toInt();
+
+    if (!pen->setLimits(lowest, highest, unlocked)) {
+        request->send(400, "text/plain",
+                      "Invalid limits - need 0 <= lowest < highest <= unlocked <= 180");
+        return;
+    }
+
+    // Leave the pen somewhere safe and known afterwards.
+    pen->setRawValue(pen->getHighestLocked());
+    handleGetPenLimits(request);
+}
+
+// Drives to the calibrated release position so a pen can be taken out or put in.
+void handleUnlockPen(AsyncWebServerRequest *request) {
+    if (!penCalibrationAllowed(request)) {
+        return;
+    }
+    pen->slowUnlock();
+    request->send(200, "text/plain", "OK");
+}
+
 // Hooks the existing E-steps calibration flow (see Movement::extend1000mm()): given the
 // distance the user actually measured after that extension, backs out and persists a
 // corrected effective pulley diameter.
@@ -94,6 +264,17 @@ void setup()
 {
     delay(10);
     Serial.begin(9600);
+    // First thing in the log: why the last run ended. A wedged device that had to
+    // be reset otherwise leaves no trace of whether it panicked, tripped a
+    // watchdog, or browned out.
+    Serial.printf("Boot. Last reset reason: %d\n", (int)esp_reset_reason());
+
+    // Brought up first, ahead of everything that can fail or block, so the
+    // machine can report a failed LittleFS mount or a long WiFi connect
+    // without a serial cable attached.
+    statusLed = new StatusLed();
+    statusLed->begin();
+    statusLed->setState("boot");
 
     if (!LittleFS.begin(true)) {
         Serial.println("An Error has occurred while mounting LittleFS");
@@ -120,6 +301,8 @@ void setup()
         resetAfterConnect = true;
     };
 
+    statusLed->setState("wifi");
+
     WiFiManager wifiManager;
 
     wifiManager.setConnectTimeout(20);
@@ -145,6 +328,11 @@ void setup()
 
     Serial.println("Started mDNS for mural");
 
+    // Watch the link from here on. Without this, a dropped connection left the
+    // machine off the network - and mural.local unresolvable - until a power
+    // cycle. See netwatch.h.
+    netWatch.begin("mural");
+
     // Wireless firmware/filesystem updates (`pio run -e esp32dev-ota -t
     // upload` / `-t uploadfs`), so reflashing doesn't require detaching the
     // wiring to get at USB. Motors are left disabled/idle during an update:
@@ -160,11 +348,31 @@ void setup()
     });
     ArduinoOTA.begin();
 
-    runner = new Runner(movement, pen, display);
+    runner = new Runner(movement, pen, display, statusLed);
     runner->setEventSource(&events);
     Serial.println("Initialized runner");
 
-    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-cache");
+    // --- Serving the UI ----------------------------------------------------
+    //
+    // A page load pulls ~400KB across 13 files. Everything was served
+    // "no-cache", so every one of them came down again on every visit - fine on
+    // a desk, painful over a marginal WiFi link where round-trips were measured
+    // at 400-1400ms.
+    //
+    // index.html stays no-cache: it is the entry point, and it has to be the
+    // thing that tells a browser about a freshly flashed UI. Everything it
+    // references gets a short max-age, so a revisit inside the window costs no
+    // requests at all. The window is deliberately minutes rather than the usual
+    // year-plus-fingerprinted-filename, because these assets are not
+    // fingerprinted - a filesystem flash reuses every name, so the max-age is
+    // also the longest anyone can be served a stale asset afterwards. Ten
+    // minutes trades a reload-after-flashing (or one hard refresh) for not
+    // re-downloading the UI on every visit.
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+              { sendIndex(request); });
+    server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest *request)
+              { sendIndex(request); });
+    server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("max-age=600");
 
     server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->handleCommand(request); });
@@ -205,6 +413,27 @@ void setup()
     server.on("/estepsCalibrationApply", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleEstepsCalibrationApply(request); });
 
+    server.on("/startOver", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleStartOver(request); });
+
+    server.on("/setMotorsFree", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleSetMotorsFree(request); });
+
+    server.on("/getPenLimits", HTTP_GET, [](AsyncWebServerRequest *request)
+              { handleGetPenLimits(request); });
+
+    server.on("/setPenLimits", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleSetPenLimits(request); });
+
+    server.on("/penJog", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handlePenJog(request); });
+
+    server.on("/unlockPen", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleUnlockPen(request); });
+
+    server.on("/useStoredCommands", HTTP_POST, [](AsyncWebServerRequest *request)
+              { phaseManager->getCurrentPhase()->useStoredCommands(request); });
+
     server.on("/installTestPattern", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->installTestPattern(request); });
 
@@ -213,6 +442,9 @@ void setup()
     // NotSupportedPhase's defaults.
     server.on("/pauseDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->pauseDrawing(request); });
+
+    server.on("/cancelDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
+              { phaseManager->getCurrentPhase()->cancelDrawing(request); });
 
     server.on("/resumeDrawing", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->resumeDrawing(request); });
@@ -231,8 +463,18 @@ void setup()
     server.on(
         "/uploadCommands", HTTP_POST,
         [](AsyncWebServerRequest *request) {
+            // handleUpload() cannot answer the request itself - it runs per chunk,
+            // before the response is due - so a failure is reported here. Without
+            // this, a rejected upload still replied with a state document that
+            // looked like success, and the UI walked on to a machine holding no
+            // command file.
+            const char* uploadError = phaseManager->getUploadError();
+            if (uploadError != nullptr) {
+                request->send(507, "text/plain", uploadError);
+                return;
+            }
             handleGetState(request);
-        }, 
+        },
         handleUpload
     );
 
@@ -251,7 +493,7 @@ void setup()
     // correct progress right away instead of a stale/empty bar for up to ~1s.
     events.onConnect([](AsyncEventSourceClient *client) {
         if (runner != NULL) {
-            char buffer[192];
+            char buffer[256];
             runner->buildProgressJson(buffer, sizeof(buffer));
             client->send(buffer, "progress", millis());
         }
@@ -260,17 +502,20 @@ void setup()
 
     Serial.println("Finished setting up the server");
 
-    phaseManager = new PhaseManager(movement, pen, runner);
+    phaseManager = new PhaseManager(movement, pen, runner, &netWatch);
 
     server.begin();
     Serial.println("Server started");
 
     display->displayHomeScreen("http://" + WiFi.localIP().toString(), "or", "http://mural.local");
+    statusLed->setState("ready");
     
 }
 
 void loop()
 {
+    statusLed->tick();
+    netWatch.tick();
     // Only service OTA while the machine is idle: an OTA transfer blocks
     // loop() for its duration, which would freeze step generation (pen
     // down against the wall, belts stalled mid-move). Gating on both the

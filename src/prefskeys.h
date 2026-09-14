@@ -7,6 +7,16 @@ static const char* PREFS_NAMESPACE = "mural";
 static const char* PREFS_TOP_DISTANCE_KEY = "topDistance";
 static const char* PREFS_PEN_ANGLE_KEY = "penAngle";
 
+// Pen-holder geometry, calibrated once per machine rather than per plot (see
+// docs/pen-servo.md). The holder is a cam: below the lowest locked angle or
+// above the highest, the pen is not properly retained, and a little beyond the
+// highest is the position where it can be lifted out and replaced. The drawing
+// contact point (PREFS_PEN_ANGLE_KEY above) lives between the two locked
+// limits, which is why those bound it rather than the servo's full 0-180 range.
+static const char* PREFS_PEN_LOWEST_KEY = "penLowest";
+static const char* PREFS_PEN_HIGHEST_KEY = "penHighest";
+static const char* PREFS_PEN_UNLOCKED_KEY = "penUnlocked";
+
 // NVS namespace/keys used to checkpoint an in-progress drawing (see Runner)
 // so it can be resumed after a power loss. Written before executing each
 // command line (throttled - see Runner::checkpointIntervalLines), so a
