@@ -1,4 +1,5 @@
 import { renderCommandsToSvgJson } from "./toSvgJson";
+import { decodeToAbsoluteLines } from "./commandFile";
 import { computePlacementOffset, offsetCommands } from "./placement";
 import { renderSvgJsonToCommands } from "./toCommands";
 import { vectorizeGrayscale, vectorizeImageData, vectorizeImageDataColor, withGradientField } from './vectorizer';
@@ -160,7 +161,12 @@ async function render(request: RequestTypes.RenderSVGRequest) {
     // Preview is built from the UNPLACED commands, so it keeps showing the
     // artwork filling its frame rather than shrunk into a corner of the drawable
     // area. Only the command file that goes to the machine is translated.
-    const resultSvgJson = renderCommandsToSvgJson(renderResult.commands, request.width, request.height, updateStatusFn, layerColors);
+    // Decoded first: the commands are step-encoded (commandFile.ts) and the
+    // preview builder reads each line as a position. Handed the file as-is it
+    // drew every step as a point near the origin - a fan of long diagonals out
+    // of the top-left corner, bearing no relation to the plot the machine would
+    // make from the same file.
+    const resultSvgJson = renderCommandsToSvgJson(decodeToAbsoluteLines(renderResult.commands), request.width, request.height, updateStatusFn, layerColors);
 
     const placementOffset = computePlacementOffset({
         width: request.width,
