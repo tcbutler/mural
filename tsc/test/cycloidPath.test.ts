@@ -119,3 +119,46 @@ test("jitter perturbs the scribble without moving its density", () => {
     const b = measuredCoverage(rough, 200, SPACING);
     assert.ok(Math.abs(a - b) / a < 0.2, `jitter is texture, not tone: ${a.toFixed(3)} vs ${b.toFixed(3)}`);
 });
+
+// Spread in how far the pen swings from the row's centreline, turn by turn -
+// the measurable difference between a regular chain of loops and a scribble.
+function swingSpread(points: ReturnType<typeof traceCycloidRow>): { spread: number; turns: number } {
+    const swings: number[] = [];
+    let current = 0;
+    let wasAbove = points[0].y >= 0;
+    for (const p of points) {
+        const above = p.y >= 0;
+        if (above !== wasAbove) {
+            if (current > 0) swings.push(current);
+            current = 0;
+            wasAbove = above;
+        }
+        current = Math.max(current, Math.abs(p.y));
+    }
+    const mean = swings.reduce((a, b) => a + b, 0) / swings.length;
+    const spread = Math.sqrt(swings.reduce((a, b) => a + (b - mean) ** 2, 0) / swings.length) / mean;
+    return { spread, turns: swings.length };
+}
+
+test("loops vary in size rather than repeating", () => {
+    // The property that stops rows of loops interlocking into lace: each turn
+    // is a slightly different size, and the pen covers a slightly different
+    // distance while drawing it.
+    const { spread, turns } = swingSpread(traceCycloidRow(0, 300, 0, {
+        spacingMm: SPACING, penWidthMm: PEN, coverage: 0.3, random: mulberry32(3),
+    }));
+
+    assert.ok(turns > 10, `expected plenty of turns to measure, got ${turns}`);
+    assert.ok(spread > 0.08, `loops should not all be the same size, spread was ${spread.toFixed(3)}`);
+});
+
+test("without a source of randomness the scribble is perfectly regular", () => {
+    // The wander is the RNG's doing, so a caller that supplies none - the
+    // default - still gets the plain, repeatable geometry the tonal model is
+    // derived from. Not exactly zero spread: the swing is measured from
+    // samples, and the sampling phase drifts against the loop.
+    const { spread } = swingSpread(traceCycloidRow(0, 300, 0, {
+        spacingMm: SPACING, penWidthMm: PEN, coverage: 0.3,
+    }));
+    assert.ok(spread < 0.02, `every loop should be the same size, spread was ${spread.toFixed(3)}`);
+});

@@ -84,6 +84,23 @@ const MAX_ADVANCE_FACTOR = 6;
 const DEFAULT_RADIUS_FRACTION = 0.8;
 const DEFAULT_STEP_RADIANS = 0.32;
 
+// How much the loop size and the pen's progress along the row wander, as a
+// fraction of their nominal values, re-drawn once per turn.
+//
+// A run of identical loops at an identical advance is what the first version
+// drew, and rows of them interlock into lace: regular enough that the eye
+// reads a woven mesh rather than shading. Nobody's hand does that. Wobbling
+// each point instead (the jitter below) does not fix it either - it roughens
+// the line without touching the regularity of the loops themselves.
+//
+// Both wander by a random walk rather than fresh noise per turn, and the
+// radius is ramped across a turn rather than switched at the top of it, so
+// the stroke stays continuous. Density is unaffected to first order: the mean
+// radius and mean advance are what they were, and the tests hold the measured
+// coverage to the same tolerance as before.
+const RADIUS_VARIATION = 0.35;
+const ADVANCE_VARIATION = 0.35;
+
 // Samples per turn for the arc-length integral below. The integrand is smooth
 // and periodic, so a coarse sum converges fast; 48 is well past the point
 // where more changes the answer in any digit that matters here.
@@ -166,24 +183,41 @@ export function traceCycloidRow(x0: number, x1: number, y: number, options: Cycl
 
     const radius = radiusFraction * spacingMm;
     const advance = advancePerLoop(coverage, radius, penWidthMm, spacingMm);
-    const centreStep = (advance * stepRadians) / (2 * Math.PI);
+    const nominalStep = (advance * stepRadians) / (2 * Math.PI);
 
     const points: CycloidPoint[] = [];
     let centreX = x0;
     let theta = random() * Math.PI * 2;
 
+    // Fraction of a turn covered per step - how fast the wandering radius
+    // ramps toward its next value, and how often a new one is drawn.
+    const turnFraction = stepRadians / (2 * Math.PI);
+    let radiusScale = 1;
+    let targetRadiusScale = 1 + (random() * 2 - 1) * RADIUS_VARIATION;
+    let advanceScale = 1 + (random() * 2 - 1) * ADVANCE_VARIATION;
+    let turnProgress = 0;
+
     // A hard cap rather than trust in the arithmetic: a caller passing a
-    // degenerate spacing should get a short row, not a hung render.
-    const maxPoints = Math.ceil(((x1 - x0) / Math.max(centreStep, 1e-6)) + 8);
+    // degenerate spacing should get a short row, not a hung render. Generous
+    // enough to allow for the slowest wandering advance.
+    const maxPoints = Math.ceil(((x1 - x0) / Math.max(nominalStep * (1 - ADVANCE_VARIATION), 1e-6)) + 8);
 
     while (centreX <= x1 && points.length < maxPoints) {
+        turnProgress += turnFraction;
+        if (turnProgress >= 1) {
+            turnProgress -= 1;
+            targetRadiusScale = 1 + (random() * 2 - 1) * RADIUS_VARIATION;
+            advanceScale = 1 + (random() * 2 - 1) * ADVANCE_VARIATION;
+        }
+        radiusScale += (targetRadiusScale - radiusScale) * turnFraction;
+
         theta += stepRadians;
-        centreX += centreStep;
+        centreX += nominalStep * advanceScale;
         const jx = jitterMm ? (random() * 2 - 1) * jitterMm : 0;
         const jy = jitterMm ? (random() * 2 - 1) * jitterMm : 0;
         points.push({
-            x: centreX + radius * Math.cos(theta) + jx,
-            y: y + radius * Math.sin(theta) + jy,
+            x: centreX + radius * radiusScale * Math.cos(theta) + jx,
+            y: y + radius * radiusScale * Math.sin(theta) + jy,
         });
     }
 
