@@ -51,6 +51,7 @@ const { vectorizeImageData, vectorizeGrayscale, vectorizeImageDataColor, withGra
 const { renderSvgJsonToCommands } = requireBuilt('toCommands');
 const { applyHueGrouping } = requireBuilt('huePalette');
 const { FILL_STRATEGY_NAMES } = requireBuilt('fillStrategyNames');
+const { decodeCommandFile } = requireBuilt('commandFile');
 
 // Plot geometry for the examples. Arbitrary but fixed, so the styles are
 // comparable to each other and the stroke counts mean something.
@@ -125,8 +126,22 @@ function commandsToPng(commands, widthMm, heightMm, palette) {
     let penDownDistanceMm = 0;
 
     ctx.beginPath();
-    for (const line of commands) {
-        if (typeof line !== 'string' || line.length === 0) continue;
+    // Coordinates in the file are steps from the point before them, so they go
+    // through the decoder rather than being read off the line (commandFile.ts).
+    for (const command of decodeCommandFile(commands)) {
+        if (typeof command !== 'string') {
+            const { x, y } = command;
+            if (penDown && current) {
+                ctx.lineTo(x * OUTPUT_SCALE, y * OUTPUT_SCALE);
+                penDownDistanceMm += Math.hypot(x - current.x, y - current.y);
+            } else {
+                ctx.moveTo(x * OUTPUT_SCALE, y * OUTPUT_SCALE);
+            }
+            current = { x, y };
+            continue;
+        }
+        const line = command;
+        if (line.length === 0) continue;
         if (line[0] === 'p') {
             const nowDown = line[1] === '1';
             if (nowDown && !penDown && current) {
@@ -145,21 +160,6 @@ function commandsToPng(commands, widthMm, heightMm, palette) {
             continue;
         }
         // d/h/t/n headers carry no coordinates.
-        if ('dhtn'.includes(line[0])) continue;
-
-        const space = line.indexOf(' ');
-        if (space <= 0) continue;
-        const x = parseFloat(line.slice(0, space));
-        const y = parseFloat(line.slice(space + 1));
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-
-        if (penDown && current) {
-            ctx.lineTo(x * OUTPUT_SCALE, y * OUTPUT_SCALE);
-            penDownDistanceMm += Math.hypot(x - current.x, y - current.y);
-        } else {
-            ctx.moveTo(x * OUTPUT_SCALE, y * OUTPUT_SCALE);
-        }
-        current = { x, y };
     }
     ctx.stroke();
 

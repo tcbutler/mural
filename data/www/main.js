@@ -805,10 +805,16 @@ function init() {
     });
 
     // A previously downloaded command file (see #downloadCommands) starts
-    // with a "d<total distance>" line.
+    // with a version line, or - if it was downloaded before the format
+    // carried one - with its "d<total distance>" header (commandFile.ts).
+    const COMMAND_FILE_VERSION_LINE = 'v2';
+
     function isCommandFile(text) {
-        const firstLine = (text.split('\n', 1)[0] || '').trim();
-        return /^d[\d.]+$/.test(firstLine);
+        const [first, second] = text.split('\n', 2).map(line => (line || '').trim());
+        if (first === COMMAND_FILE_VERSION_LINE) {
+            return /^d[\d.]+$/.test(second);
+        }
+        return /^d[\d.]+$/.test(first);
     }
 
     // Movement coordinate lines look like "x y" (see runner.cpp's
@@ -818,15 +824,33 @@ function init() {
     // only checked to be >= 0), so that's the dimension worth warning about
     // when re-uploading a file that may have been generated for a different
     // pin distance.
+    //
+    // In a v2 file those numbers are a STEP from the previous point, in
+    // tenths of a millimetre, so they have to be accumulated rather than
+    // read - see tsc/src/commandFile.ts, which is where the format lives.
+    // This page cannot import that module (the worker bundle is reached by
+    // message, not by require), so the running total is repeated here.
     function findMaxCommandFileX(text) {
+        const lines = text.split('\n');
+        const relative = (lines[0] || '').trim() === COMMAND_FILE_VERSION_LINE;
+        const unitsPerMm = 10;
+
         let maxX = null;
-        for (const line of text.split('\n')) {
-            const match = line.match(/^([\d.]+) ([\d.]+)$/);
-            if (match) {
-                const x = parseFloat(match[1]);
-                if (maxX === null || x > maxX) {
-                    maxX = x;
-                }
+        let x = 0;
+        for (const line of lines) {
+            const match = line.trim().match(/^(-?[\d.]+) (-?[\d.]+)$/);
+            if (!match) {
+                continue;
+            }
+            const value = parseFloat(match[1]);
+            if (relative) {
+                x += value;
+            } else {
+                x = value * unitsPerMm;
+            }
+            const mm = x / unitsPerMm;
+            if (maxX === null || mm > maxX) {
+                maxX = mm;
             }
         }
         return maxX;
@@ -838,7 +862,8 @@ function init() {
     // file's coordinates were laid out for. Older files (or ones downloaded
     // before this header existed) won't have it.
     function findFileTopDistance(text) {
-        const headerLines = text.split('\n', 3);
+        // Four, not three: a v2 file spends its first line saying so.
+        const headerLines = text.split('\n', 4);
         for (const line of headerLines) {
             const match = line.trim().match(/^t([\d.]+)$/);
             if (match) {

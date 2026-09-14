@@ -84,11 +84,9 @@ it stands in for.
 What it does cost is waypoints. The command file stores every point along a
 stroke, and a curve needs far more of them than a straight line — about two
 and a half times as many for the same ink. On an A2 sheet with six pens at
-the densest infill that is a 777KB command file against cross-hatch's 324KB,
-and the machine has around 600KB of filesystem free. Loop scribble is a
-style for a drawing, not for covering a wall in solid tone; past the middle
-of the density ladder on a large multi-pen plot, Mural will tell you there
-is not enough space for it.
+the densest infill that is a 394KB command file against cross-hatch's 172KB,
+where the machine has around 600KB of filesystem free. It fits, with less
+room to spare than any other style.
 
 Give it one flat region and it draws a texture. Give it tone and it draws
 shading, which is the point of it:

@@ -39,6 +39,22 @@ import sys
 # Even the heaviest case above is 28,610 commands at 233KB. 384KB is ~1.6x that
 # worst case, which the OTA layout satisfies with 488KB free.
 #
+# REMEASURED 2026-09-14, on the same A2/6-pen/densest/2400px case but with the
+# curve-heavy fill styles that did not exist when the table above was written,
+# and after coordinates became steps rather than positions (tsc/src/commandFile.
+# ts, which roughly halved every one of these):
+#
+#   cross-hatch     172 KB
+#   spiral          279 KB
+#   contour         368 KB
+#   loop scribble   394 KB   <- worst constructed
+#
+# So the worst case now exceeds this reserve, while still fitting the ~596KB
+# the current image actually leaves free. The 1.6x margin the number was chosen
+# for has become about 1.5x, measured against a worst case that is a deliberate
+# extreme rather than anything a person would plot. Worth revisiting the moment
+# a real plot gets refused.
+#
 # If a real plot ever exceeds this, raise it and shrink the app slots to match
 # (1472K each would return 256KB to the filesystem) rather than removing the gate.
 MIN_FS_HEADROOM_BYTES = 384 * 1024

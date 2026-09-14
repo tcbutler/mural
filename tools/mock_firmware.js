@@ -180,13 +180,14 @@ function setPhase(next) {
 // --- Simulated plot -------------------------------------------------------
 
 function parseTotals(buf) {
-    // Command files start with a `d<distance>` header then one command per line
-    // (see Runner::parseCommandFileHeader).
+    // Command files open with an optional `v<n>` version line and a
+    // `d<distance>` header, then one command per line (see
+    // Runner::parseCommandFileHeader and tsc/src/commandFile.ts).
     const text = buf ? buf.toString('utf8') : '';
     const lines = text.split('\n').filter(l => l.trim().length > 0);
-    const header = lines.find(l => l.startsWith('d'));
+    const header = lines.find(l => /^d[\d.]/.test(l));
     const distance = header ? parseFloat(header.slice(1)) : 0;
-    const commands = lines.filter(l => !/^[dtn]/.test(l));
+    const commands = lines.filter(l => !/^[vdtn]/.test(l));
     return { totalLines: Math.max(commands.length, 1), totalDistance: distance };
 }
 

@@ -25,6 +25,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { assertCoordinatesInBounds, assertPenStatesAlternate } from "./fixtures";
 import type { RequestTypes } from "../src/types";
+import { decodeCommandFile } from "../src/commandFile";
 
 process.env.server = "1";
 
@@ -120,17 +121,20 @@ if (!paperAvailable) {
             assertPenStatesAlternate(result.commands as any);
             assert.strictEqual(result.commands[result.commands.length - 1], "p0", "output must end pen-up");
 
-            // 2. All coordinates within [0,width] x [0,height].
-            for (const cmd of result.commands) {
-                if (cmd === "p0" || cmd === "p1" || cmd.startsWith("d") || cmd.startsWith("h") || cmd.startsWith("t")) continue;
-                const [x, y] = cmd.split(" ").map(Number);
+            // 2. All coordinates within [0,width] x [0,height]. Read through
+            // the decoder, since the file writes each point as a step from
+            // the one before it (commandFile.ts) - which also means this
+            // exercises the round trip on real pipeline output.
+            for (const cmd of decodeCommandFile(result.commands)) {
+                if (typeof cmd === "string") continue;
+                const { x, y } = cmd;
                 assert.ok(x >= 0 && x <= request.width, `x=${x} out of [0, ${request.width}] in ${svgFile}`);
                 assert.ok(y >= 0 && y <= request.height, `y=${y} out of [0, ${request.height}] in ${svgFile}`);
             }
 
             // 3. d-header equals independently recomputed total distance
             // (within rounding tolerance), and drawDistance <= totalDistance.
-            const dHeader = result.commands.find((c) => c.startsWith("d"));
+            const dHeader = result.commands.find((c) => /^d[\d.]/.test(c));
             assert.ok(dHeader, "expected a d<number> header");
             const declaredDistance = parseFloat(dHeader!.slice(1));
             assert.ok(Math.abs(declaredDistance - result.distance) < 1e-6);

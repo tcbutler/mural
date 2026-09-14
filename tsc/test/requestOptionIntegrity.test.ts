@@ -59,6 +59,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Command, RequestTypes } from "../src/types";
+import { decodeCommandFile } from "../src/commandFile";
 
 process.env.server = "1";
 
@@ -495,17 +496,22 @@ if (!paperAvailable) {
         const fullResult = await renderSvgJsonToCommands(fullRequest, noopStatus);
         const disabledResult = await renderSvgJsonToCommands(disabledRequest, noopStatus);
 
-        function layerBlock(commands: string[], name: string): string[] {
-            const nIndex = commands.findIndex((c) => c.startsWith("n") && c.endsWith(` ${name}`));
+        // Decoded before comparing: coordinate lines are steps from the point
+        // before them (commandFile.ts), so dropping a layer rewrites how the
+        // next layer's first point is written without moving it anywhere.
+        function layerBlock(rawCommands: string[], name: string) {
+            const commands = decodeCommandFile(rawCommands);
+            const isPalette = (c: Command) => typeof c === "string" && /^n\d+ /.test(c);
+            const nIndex = commands.findIndex((c) => typeof c === "string" && c.startsWith("n") && c.endsWith(` ${name}`));
             assert.ok(nIndex >= 0, `expected an n<index> header for ${name}`);
             const cIndexes = commands.reduce<number[]>((acc, c, i) => {
-                if (/^c\d+$/.test(c)) acc.push(i);
+                if (typeof c === "string" && /^c\d+$/.test(c)) acc.push(i);
                 return acc;
             }, []);
-            const nHeaderCount = commands.filter((c) => /^n\d+ /.test(c)).length;
-            const layerStartsAt = [commands.findIndex((c) => /^n\d+ /.test(c)) + nHeaderCount, ...cIndexes.map((i) => i + 1)];
+            const nHeaderCount = commands.filter(isPalette).length;
+            const layerStartsAt = [commands.findIndex(isPalette) + nHeaderCount, ...cIndexes.map((i) => i + 1)];
             const layerEndsAt = [...cIndexes, commands.length];
-            const layerNumber = parseInt(commands[nIndex].match(/^n(\d+) /)![1], 10);
+            const layerNumber = parseInt((commands[nIndex] as string).match(/^n(\d+) /)![1], 10);
             return commands.slice(layerStartsAt[layerNumber - 1], layerEndsAt[layerNumber - 1]);
         }
 
