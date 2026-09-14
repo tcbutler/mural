@@ -84,9 +84,10 @@ trapping gap so two pens never touch, and hue grouping so a two-blue image needs
 one blue pen at two hatch densities rather than two pens.
 → [docs/mark-making.md](docs/mark-making.md), [docs/multi-color.md](docs/multi-color.md)
 
-**Seven fill styles** instead of one — cross-hatch, single-direction, angled,
-jittered, spiral, contour, and a gradient hatch that follows the image's own
-shading like an engraving. → [docs/mark-making.md](docs/mark-making.md)
+**Eight fill styles** instead of one — cross-hatch, single-direction, angled,
+jittered, spiral, contour, a gradient hatch that follows the image's own
+shading like an engraving, and a loop scribble that shades the way a biro
+does. → [docs/mark-making.md](docs/mark-making.md)
 
 **Photographs**, traced directly rather than via a vector detour.
 

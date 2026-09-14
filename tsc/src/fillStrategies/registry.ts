@@ -15,6 +15,10 @@
 //     PathDensityData.hatchAngleDegrees (default 45).
 //   - jitteredHatch: crossHatchAngled's angled cross-hatch with each line's
 //     endpoints perturbed by a small seeded-random offset.
+//   - cycloid: rows of continuous looping strokes instead of straight lines -
+//     biro scribble. Offered against crossHatch45 rather than the lighter
+//     styles because it is matched to crossHatch45's ink, so swapping to it
+//     changes the handwriting and not the density (see cycloid.ts's header).
 // All three honor PathDensityData.hatchAngleDegrees, so "angle" is a
 // parameter available on every non-default strategy rather than a 4th
 // separate named strategy - see each file's header for why.
@@ -26,6 +30,7 @@ import { crossHatchAngled } from './crossHatchAngled';
 import { jitteredHatch } from './jitteredHatch';
 import { gradientHatch } from './gradientHatch';
 import { contour } from './contour';
+import { cycloid } from './cycloid';
 
 export const defaultFillStrategyName = crossHatch45.name;
 
@@ -37,4 +42,5 @@ export const fillStrategies: Record<string, FillStrategy> = {
     [jitteredHatch.name]: jitteredHatch,
     [gradientHatch.name]: gradientHatch,
     [contour.name]: contour,
+    [cycloid.name]: cycloid,
 };

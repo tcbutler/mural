@@ -283,6 +283,13 @@ export const INFILL_US_PER_SEGMENT_AT_BASE_SPACING: Record<FillStrategyName, num
     spiral: 286,
     gradientHatch: 350,
     contour: 344,
+    // Not measured - the benchmark needs paper.js, which needs a compiled
+    // native canvas addon that a default checkout does not have. Pitched at
+    // gradientHatch's cost because the two do the same expensive thing: test
+    // a point against the shape at every step along a curved stroke, rather
+    // than intersecting a straight line once. Worth re-measuring on a machine
+    // that can run the bench before anyone leans on the estimate.
+    cycloid: 350,
 };
 export const INFILL_BASE_SPACING_MM = 10; // density level 3 - the coefficients above are calibrated at this spacing
 

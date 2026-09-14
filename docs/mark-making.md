@@ -1,6 +1,6 @@
 # Mark-making
 
-How Mural 2.0 puts ink on paper: seven fill styles, tonal shading from one pen,
+How Mural 2.0 puts ink on paper: eight fill styles, tonal shading from one pen,
 and multi-colour separation with pen swaps.
 
 Every picture here is drawn from the real command file the machine would
@@ -20,9 +20,9 @@ line work, and a wordmark knocked out of a shadowed band.
 
 ---
 
-## The seven fill styles
+## The eight fill styles
 
-The original cross-hatch plus six new ones, all on the same image at 400 × 229 mm
+The original cross-hatch plus seven new ones, all on the same image at 400 × 229 mm
 and infill density 3, so the numbers are comparable.
 
 <img src="../images/style-examples/source.png" width="480" alt="Source image: a gradient disc, flat colour shapes, a vertical colour ramp, thin diagonal line work, and MURAL2.0 knocked out of a dark band with a soft drop shadow">
@@ -36,6 +36,29 @@ and infill density 3, so the numbers are comparable.
 Note how thin gradient hatch looks here: it only marks where the image actually
 has shading to follow, and most of this test image is flat colour. Give it
 something with tone and it behaves completely differently.
+
+**Loop scribble** has no picture in this gallery yet. Its geometry is unit
+tested (`test/cycloidPath.test.ts`) but rendering an example needs paper.js,
+which needs a compiled native `canvas` addon that a default checkout does not
+build — so regenerate the gallery on a machine that has one:
+
+```bash
+cd tsc && npm install canvas
+node tools/make_style_examples.js --only cycloid
+```
+
+It fills a shape with rows of continuous looping strokes, the way someone
+shades with a biro without lifting the pen. The loops crowd together for a
+darker tone and stretch out for a lighter one, and the advance rate that
+controls that is solved rather than tuned: ink landing on ink covers no new
+paper, so the naive reading saturates around half tone and flattens everything
+above a mid grey into the same shade.
+
+It is matched to the default cross-hatch's ink rather than to the lighter
+styles, which is deliberate. Matched to a single-direction hatch the loops
+stretch out into a plain wavy line — correct tone, no scribble. Matched to
+cross-hatch they are real loops, and swapping to it changes the handwriting
+rather than the density.
 
 ### The right style for the subject
 
