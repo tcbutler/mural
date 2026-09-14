@@ -80,3 +80,84 @@ test("offsetCommands: translation does not change path length", () => {
     };
     assert.equal(span(moved), span(commands));
 });
+
+// --- Step-encoded files -----------------------------------------------------
+//
+// Coordinates became steps from the previous point (commandFile.ts) while this
+// function still added the offset to every line, as it could when every line was
+// a position. Each point was then displaced by a further offset and the drawing
+// sheared: a stroke meant for (110,60)-(120,60)-(120,70) came out as
+// (20,15)-(40,20)-(50,35). Placement defaults to centring, so this was not an
+// edge case - it was every plot.
+
+/** Decodes the way src/runner.cpp does, so these assert what the machine draws. */
+function firmwareDecode(lines: string[]): { x: number, y: number }[] {
+    const relative = lines[0] === "v2";
+    const points: { x: number, y: number }[] = [];
+    let x = 0, y = 0;
+    for (const line of lines) {
+        if (!line || "vpdhtnc".includes(line[0])) continue;
+        const separator = line.indexOf(" ");
+        if (separator <= 0) continue;
+        const a = parseFloat(line.slice(0, separator));
+        const b = parseFloat(line.slice(separator + 1));
+        if (relative) { x += a / 10; y += b / 10; } else { x = a; y = b; }
+        points.push({ x: +x.toFixed(4), y: +y.toFixed(4) });
+    }
+    return points;
+}
+
+test("offsetCommands: a step-encoded drawing is translated, not sheared", () => {
+    const { encodeCommandFile } = require("../src/commandFile") as typeof import("../src/commandFile");
+    const encoded = encodeCommandFile([
+        "d100.0", "h50", "p1", { x: 10, y: 10 }, { x: 20, y: 10 }, { x: 20, y: 20 }, "p0",
+    ]);
+
+    const placed = offsetCommands(encoded, { x: 100, y: 50 });
+
+    assert.deepEqual(firmwareDecode(placed), [
+        { x: 110, y: 60 }, { x: 120, y: 60 }, { x: 120, y: 70 },
+    ]);
+});
+
+test("offsetCommands: only the first point moves, so the shape is unchanged", () => {
+    const { encodeCommandFile } = require("../src/commandFile") as typeof import("../src/commandFile");
+    const encoded = encodeCommandFile([
+        "d100.0", "p1", { x: 5, y: 5 }, { x: 15, y: 5 }, { x: 15, y: 25 }, "p0",
+    ]);
+
+    const before = firmwareDecode(encoded);
+    const after = firmwareDecode(offsetCommands(encoded, { x: 30, y: 70 }));
+
+    const span = (pts: { x: number, y: number }[]) => ({
+        w: Math.max(...pts.map(p => p.x)) - Math.min(...pts.map(p => p.x)),
+        h: Math.max(...pts.map(p => p.y)) - Math.min(...pts.map(p => p.y)),
+    });
+    assert.deepEqual(span(after), span(before));
+    // Every point moved by the same amount - that is what translation means.
+    after.forEach((point, index) => {
+        assert.equal(+(point.x - before[index].x).toFixed(4), 30);
+        assert.equal(+(point.y - before[index].y).toFixed(4), 70);
+    });
+});
+
+test("offsetCommands: a step-encoded file stays integer-only after placement", () => {
+    const { encodeCommandFile } = require("../src/commandFile") as typeof import("../src/commandFile");
+    const encoded = encodeCommandFile(["d1.0", "p1", { x: 1, y: 1 }, { x: 2, y: 2 }, "p0"]);
+
+    // A fractional offset must not put a decimal point into a format that has
+    // none, or the firmware and this code round it differently.
+    for (const line of offsetCommands(encoded, { x: 12.34, y: 56.78 })) {
+        if (line.includes(" ") && /^-?\d/.test(line)) {
+            assert.match(line, /^-?\d+ -?\d+$/, `expected integer steps, got "${line}"`);
+        }
+    }
+});
+
+test("offsetCommands: a v1 file is still offset on every line", () => {
+    // No version marker, so every line is a position and all of them move.
+    const v1 = ["d100.0", "p1", "10.0 10.0", "20.0 10.0", "p0"];
+    assert.deepEqual(offsetCommands(v1, { x: 5, y: 5 }), [
+        "d100.0", "p1", "15.0 15.0", "25.0 15.0", "p0",
+    ]);
+});

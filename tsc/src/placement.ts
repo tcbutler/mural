@@ -16,6 +16,8 @@
 // rendering, so the on-screen preview still shows the artwork filling its
 // frame instead of shrunk into a corner of the drawable area.
 
+import { COMMAND_FILE_VERSION_LINE, COORDINATE_UNITS_PER_MM } from './commandFile';
+
 export type Placement = "centre" | "topLeft";
 
 export interface PlacementInputs {
@@ -89,6 +91,18 @@ export function offsetCommands(commands: string[], offset: Offset): string[] {
         return commands;
     }
 
+    // A v2 file writes each point as a step from the one before it
+    // (commandFile.ts), and translating a path made of steps means moving only
+    // where it starts - every later step is a difference, and differences do not
+    // move. Adding the offset to all of them, which is what this function did
+    // when every line was a position, displaces each point by a further offset
+    // and shears the drawing: a stroke meant for (110,60)-(120,60)-(120,70) came
+    // out as (20,15)-(40,20)-(50,35). Since placement defaults to centring, that
+    // was every plot.
+    if (commands.length > 0 && commands[0].trim() === COMMAND_FILE_VERSION_LINE) {
+        return offsetRelativeCommands(commands, offset);
+    }
+
     return commands.map(line => {
         // Headers and pen/colour commands carry no coordinates.
         if (line.length === 0 || /^[dhtnpc]/.test(line)) {
@@ -109,5 +123,36 @@ export function offsetCommands(commands: string[], offset: Offset): string[] {
         // One decimal place, matching the precision the renderer emits - the
         // machine's own resolution is one microstep, about 0.025mm.
         return `${(x + offset.x).toFixed(1)} ${(y + offset.y).toFixed(1)}`;
+    });
+}
+
+/**
+ * Translates a v2 (step-encoded) command file by moving its first point.
+ *
+ * Steps are integers in tenths of a millimetre, so the offset is converted and
+ * rounded to keep the file integer-only - a fractional step would be written
+ * with a decimal point the format does not use, and would round differently in
+ * the firmware than here.
+ */
+function offsetRelativeCommands(commands: string[], offset: Offset): string[] {
+    const stepX = Math.round(offset.x * COORDINATE_UNITS_PER_MM);
+    const stepY = Math.round(offset.y * COORDINATE_UNITS_PER_MM);
+    let moved = false;
+
+    return commands.map(line => {
+        if (moved) {
+            return line;
+        }
+        const separator = line.indexOf(" ");
+        if (separator <= 0) {
+            return line;
+        }
+        const x = parseFloat(line.slice(0, separator));
+        const y = parseFloat(line.slice(separator + 1));
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return line;
+        }
+        moved = true;
+        return `${x + stepX} ${y + stepY}`;
     });
 }

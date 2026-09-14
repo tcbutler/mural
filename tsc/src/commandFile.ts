@@ -127,3 +127,16 @@ export function decodeCommandFile(lines: string[]): Command[] {
 
     return commands;
 }
+
+/**
+ * Decodes a command file back to absolute millimetre lines, in the same
+ * `"x y"` shape the file used before v2.
+ *
+ * For consumers that want text rather than structured commands - the preview
+ * builder (toSvgJson.ts) is one, and it parses lines with charAt/split rather
+ * than taking a Command[].
+ */
+export function decodeToAbsoluteLines(lines: string[]): string[] {
+    return decodeCommandFile(lines).map(command =>
+        typeof command === 'string' ? command : `${command.x} ${command.y}`);
+}
