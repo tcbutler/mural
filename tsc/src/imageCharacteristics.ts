@@ -45,6 +45,40 @@ export type ImageCharacteristics = {
     // computeContinuousToneScore's own comment for the exact formula/why.
     continuousToneScore: number;
     classification: 'flat' | 'continuous-tone';
+
+    // --- what the image offers a tone-driven render -------------------
+    //
+    // The fields above describe how to draw. These describe what there is to
+    // draw from, which is a different question and the one a photograph
+    // fails on. A phone photo of a page has no true white in it anywhere:
+    // the paper meters as a mid grey, and anything that maps tone to ink
+    // then inks the whole background.
+
+    // Fraction of the frame already bright enough to leave as bare paper.
+    // Near zero means a white point has to be chosen or the render comes
+    // back as a grey rectangle.
+    whiteHeadroom: number;
+    // Mean ink coverage the image would ask for if tone mapped straight to
+    // density. Drives how expensive a dense hatch actually is: at the same
+    // density setting a dark photograph costs several times what a light one
+    // does, which nothing in the recommendations used to notice.
+    meanDarkness: number;
+    // Luminance of the image's brightest real tone (98th percentile, so a
+    // handful of blown highlights cannot speak for the whole frame). This
+    // is what the paper is *actually* reading as.
+    paperLuminance: number;
+    // Mean saturation over opaque pixels. The gate on everything below: a
+    // near-neutral image still splits into two hue groups, but they are made
+    // of a handful of stray pixels and mean nothing.
+    chroma: number;
+    // Share of the frame carrying real colour (saturation above a floor).
+    chromaticFraction: number;
+    // Between the image's two dominant hue groups: how far apart they are in
+    // luminance, and how far apart in hue. A subject that differs in hue but
+    // not in tone is the case greyscale cannot represent - convert it
+    // faithfully and the subject comes out as a hole in its background.
+    tonalSeparation: number;
+    hueSeparation: number;
 };
 
 import { compositedLuminance } from './grayscale';
@@ -200,11 +234,148 @@ function computeContinuousToneScore(midToneFraction: number, colorConcentration:
 // the numbers this was checked against.
 export const CONTINUOUS_TONE_CLASSIFICATION_THRESHOLD = 0.35;
 
+// Bright enough to leave as bare paper. Deliberately a shade below
+// grayscale.ts's BACKGROUND_LUMINANCE_THRESHOLD (0.92): that one decides
+// what the tracer treats as background and wants to be conservative, this
+// one only measures how much headroom the image has, and an image whose
+// "white" sits at 0.91 has headroom in every sense that matters here.
+const PAPER_LUMINANCE_THRESHOLD = 0.90;
+
+// A pixel counts as carrying colour above this saturation (max channel minus
+// min). Below it, hue is mostly sensor noise and JPEG chroma subsampling.
+const CHROMATIC_SATURATION_FLOOR = 0.12;
+
+// Bins per axis for the chromaticity histogram the two dominant hue groups
+// are found in. Deterministic by construction - k-means with a random start
+// would give the same image different defaults on different runs, which is
+// the one thing a default must never do.
+const CHROMATICITY_BINS = 16;
+
+// Two hue groups have to be at least this far apart in chromaticity to count
+// as separate. Below it they are the same colour described twice, and their
+// luminance difference says nothing about subject versus background.
+const MIN_CHROMATICITY_SEPARATION = 0.06;
+
+function computePaperStatistics(luminance: Float32Array): { whiteHeadroom: number; paperLuminance: number; meanDarkness: number } {
+    if (luminance.length === 0) return { whiteHeadroom: 0, paperLuminance: 0, meanDarkness: 0 };
+
+    // A 256-bin histogram rather than a sort: exact enough for a percentile
+    // at this scale and linear in the pixel count.
+    const bins = new Uint32Array(256);
+    let bright = 0;
+    let darknessSum = 0;
+    for (let i = 0; i < luminance.length; i++) {
+        const v = luminance[i];
+        bins[Math.min(255, Math.max(0, Math.round(v * 255)))]++;
+        if (v > PAPER_LUMINANCE_THRESHOLD) bright++;
+        darknessSum += 1 - v;
+    }
+
+    const target = luminance.length * 0.98;
+    let seen = 0;
+    let paperBin = 255;
+    for (let b = 0; b < 256; b++) {
+        seen += bins[b];
+        if (seen >= target) { paperBin = b; break; }
+    }
+
+    return {
+        whiteHeadroom: bright / luminance.length,
+        paperLuminance: paperBin / 255,
+        meanDarkness: darknessSum / luminance.length,
+    };
+}
+
+function computeColorSeparation(imageData: ImageData, luminance: Float32Array): {
+    chroma: number; chromaticFraction: number; tonalSeparation: number; hueSeparation: number;
+} {
+    const { data, width, height } = imageData;
+    const total = width * height;
+    const none = { chroma: 0, chromaticFraction: 0, tonalSeparation: 0, hueSeparation: 0 };
+    if (total === 0) return none;
+
+    // Chromaticity - colour with brightness divided out - so the two groups
+    // separate by hue rather than by how light they happen to be. On raw RGB
+    // the means separate by brightness instead, which puts a ginger subject
+    // and a green background in the same bin.
+    const bins = new Float64Array(CHROMATICITY_BINS * CHROMATICITY_BINS);
+    const sumLum = new Float64Array(CHROMATICITY_BINS * CHROMATICITY_BINS);
+    let saturationSum = 0;
+    let opaque = 0;
+    let chromatic = 0;
+
+    for (let i = 0, p = 0; i < total; i++, p += 4) {
+        const a = data[p + 3];
+        if (a === 0) continue;
+        opaque++;
+
+        // Composited, for the same reason the luminance buffer is: a colour
+        // at low alpha is a pale version of itself on the paper.
+        const f = a / 255;
+        const r = data[p] * f + 255 * (1 - f);
+        const g = data[p + 1] * f + 255 * (1 - f);
+        const b = data[p + 2] * f + 255 * (1 - f);
+
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = (max - min) / 255;
+        saturationSum += saturation;
+        if (saturation <= CHROMATIC_SATURATION_FLOOR) continue;
+        chromatic++;
+
+        const sum = r + g + b;
+        if (sum <= 0) continue;
+        const cx = Math.min(CHROMATICITY_BINS - 1, Math.floor((r / sum) * CHROMATICITY_BINS));
+        const cy = Math.min(CHROMATICITY_BINS - 1, Math.floor((g / sum) * CHROMATICITY_BINS));
+        const bin = cy * CHROMATICITY_BINS + cx;
+        bins[bin]++;
+        sumLum[bin] += luminance[i];
+    }
+
+    if (opaque === 0) return none;
+    const chroma = saturationSum / opaque;
+    const chromaticFraction = chromatic / total;
+
+    // Heaviest bin, then the heaviest bin far enough away from it to be a
+    // different colour rather than the same one smeared across neighbours.
+    let first = -1;
+    for (let b = 0; b < bins.length; b++) if (first < 0 || bins[b] > bins[first]) first = b;
+    if (first < 0 || bins[first] === 0) return { chroma, chromaticFraction, tonalSeparation: 0, hueSeparation: 0 };
+
+    const binCentre = (bin: number) => ({
+        x: ((bin % CHROMATICITY_BINS) + 0.5) / CHROMATICITY_BINS,
+        y: (Math.floor(bin / CHROMATICITY_BINS) + 0.5) / CHROMATICITY_BINS,
+    });
+    const a1 = binCentre(first);
+
+    let second = -1;
+    for (let b = 0; b < bins.length; b++) {
+        if (bins[b] === 0) continue;
+        const c = binCentre(b);
+        if (Math.hypot(c.x - a1.x, c.y - a1.y) < MIN_CHROMATICITY_SEPARATION) continue;
+        if (second < 0 || bins[b] > bins[second]) second = b;
+    }
+    if (second < 0) return { chroma, chromaticFraction, tonalSeparation: 0, hueSeparation: 0 };
+
+    const a2 = binCentre(second);
+    const lum1 = sumLum[first] / bins[first];
+    const lum2 = sumLum[second] / bins[second];
+
+    return {
+        chroma,
+        chromaticFraction,
+        tonalSeparation: Math.abs(lum1 - lum2),
+        hueSeparation: Math.hypot(a1.x - a2.x, a1.y - a2.y),
+    };
+}
+
 export function analyzeImageCharacteristics(imageData: ImageData): ImageCharacteristics {
     const { width, height } = imageData;
     const { luminance, opaqueFraction } = buildLuminanceBuffer(imageData);
     const { colorConcentration, estimatedDistinctColors } = computeColorConcentration(imageData);
     const { flatFraction, edgeFraction, midToneFraction } = computeGradientFractions(luminance, width, height);
+    const { whiteHeadroom, paperLuminance, meanDarkness } = computePaperStatistics(luminance);
+    const colour = computeColorSeparation(imageData, luminance);
 
     const continuousToneScore = computeContinuousToneScore(midToneFraction, colorConcentration);
     const classification = continuousToneScore >= CONTINUOUS_TONE_CLASSIFICATION_THRESHOLD ? 'continuous-tone' : 'flat';
@@ -220,5 +391,12 @@ export function analyzeImageCharacteristics(imageData: ImageData): ImageCharacte
         midToneFraction,
         continuousToneScore,
         classification,
+        whiteHeadroom,
+        meanDarkness,
+        paperLuminance,
+        chroma: colour.chroma,
+        chromaticFraction: colour.chromaticFraction,
+        tonalSeparation: colour.tonalSeparation,
+        hueSeparation: colour.hueSeparation,
     };
 }
