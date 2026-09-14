@@ -240,6 +240,18 @@ void handleUnlockPen(AsyncWebServerRequest *request) {
     request->send(200, "text/plain", "OK");
 }
 
+// Closes the holder again after a pen swap. The other half of /unlockPen, and
+// reachable from anywhere the machine is standing still - swapping a pen is not
+// something that only happens during setup, and until now the only way back from
+// a released holder was to walk the calibration screen again.
+void handleLockPen(AsyncWebServerRequest *request) {
+    if (!penCalibrationAllowed(request)) {
+        return;
+    }
+    pen->slowLock();
+    request->send(200, "text/plain", "OK");
+}
+
 // Hooks the existing E-steps calibration flow (see Movement::extend1000mm()): given the
 // distance the user actually measured after that extension, backs out and persists a
 // corrected effective pulley diameter.
@@ -430,6 +442,9 @@ void setup()
 
     server.on("/unlockPen", HTTP_POST, [](AsyncWebServerRequest *request)
               { handleUnlockPen(request); });
+
+    server.on("/lockPen", HTTP_POST, [](AsyncWebServerRequest *request)
+              { handleLockPen(request); });
 
     server.on("/useStoredCommands", HTTP_POST, [](AsyncWebServerRequest *request)
               { phaseManager->getCurrentPhase()->useStoredCommands(request); });

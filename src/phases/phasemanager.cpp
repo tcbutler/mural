@@ -172,6 +172,9 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     // Survives the restart it describes, so a hang can be diagnosed after the
     // fact instead of only while it is happening.
     root["resetReason"] = resetReasonName();
+    // Whether the pen holder is open (see Pen::isReleased). The UI's change-pen
+    // control is a toggle, and this is what tells it which way round to be.
+    root["penReleased"] = pen->isReleased();
     root["topDistance"] = topDistance;
     root["safeWidth"] = safeWidth;
     root["homeX"] = homePosition.x;

@@ -98,10 +98,26 @@ class Pen {
     int getLowestLocked() const { return lowestLocked; }
     int getHighestLocked() const { return highestLocked; }
     int getUnlockedAngle() const { return unlockedAngle; }
+    // Whether the holder is currently open. Reported in the state document so
+    // the UI's "change pen" control shows the right half of the toggle after a
+    // reload, or after a release performed from the calibration screen.
+    //
+    // False on an uncalibrated machine whatever the servo is doing: with no
+    // release angle distinct from "locked and up", there is no open position to
+    // be in - see Pen::setLimits, which allows unlocked == highestLocked.
+    bool isReleased() const {
+        return unlockedAngle > highestLocked && currentPosition >= unlockedAngle;
+    }
 
     // Drives to the release position so a pen can be taken out or put in. Only
     // meaningful once calibrated; with the defaults it is the same as slowUp().
     bool slowUnlock();
+    // Closes the holder onto whatever is in it, at the calibrated "highest
+    // locked" angle. Deliberately NOT slowUp(): that refuses when no contact
+    // point has been calibrated yet (penDistance == -1), which would be a trap -
+    // release the pen on a fresh machine and there would be no way to close the
+    // holder again. Locking needs nothing but the holder's own geometry.
+    bool slowLock();
 
     // Estimated seconds for one pen up or down move, derived from the same
     // constants doSlowMove() actually steps through. Returns 0 before the pen
