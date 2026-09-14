@@ -86,3 +86,35 @@ test("analyzeImageCharacteristics: fully transparent image doesn't throw and rea
     assert.equal(characteristics.opaqueFraction, 0);
     assert.equal(characteristics.classification, "flat");
 });
+
+// A soft drop shadow: black stored at a low alpha over bare paper. On the
+// page it is a pale grey, and grayscale.ts judges it that way when deciding
+// what to trace. The analyser used to read the stored RGB instead, so it saw
+// near-black where the renderer saw 8% grey - the same image, described two
+// different ways depending on which module you asked.
+function makeSoftShadowImage(): ImageData {
+    const width = 200, height = 200;
+    return makeImageData(width, height, (x, y) => {
+        if (x < width / 2) return [255, 255, 255, 255];   // bare paper
+        return [0, 0, 0, 20];                              // shadow: 8% grey on paper
+    });
+}
+
+test("analyzeImageCharacteristics judges a pixel as it lands on the paper", () => {
+    const c = analyzeImageCharacteristics(makeSoftShadowImage());
+
+    // Composited, the shadow is a pale grey against white: a mild edge down
+    // the middle and flat either side of it. Read as stored black-on-white it
+    // would be a maximum-contrast boundary instead.
+    assert.ok(c.flatFraction > 0.9,
+        `a pale shadow beside bare paper should read as almost entirely flat, got ${c.flatFraction}`);
+    assert.equal(c.edgeFraction, 0,
+        'an 8% grey step is not a hard edge once composited over the paper');
+});
+
+test("a fully transparent pixel still reads as paper, not as its stored colour", () => {
+    // Stored black but invisible: the machine draws nothing there.
+    const c = analyzeImageCharacteristics(makeImageData(100, 100, () => [0, 0, 0, 0]));
+    assert.equal(c.opaqueFraction, 0);
+    assert.equal(c.edgeFraction, 0, 'blank paper has no edges');
+});
