@@ -875,7 +875,10 @@ int Runner::countTotalCommandLines() {
     bool hasTopDistanceUnused;
     double topDistanceUnused;
     int paletteCountUnused;
-    if (!parseCommandFileHeader(f, totalDistanceUnused, hasTopDistanceUnused, topDistanceUnused, nullptr, paletteCountUnused)) {
+    // This one only counts lines, so it never decodes a coordinate and does not
+    // care which format they are in.
+    bool relativeCoordinatesUnused;
+    if (!parseCommandFileHeader(f, totalDistanceUnused, hasTopDistanceUnused, topDistanceUnused, nullptr, paletteCountUnused, relativeCoordinatesUnused)) {
         f.close();
         return 0;
     }
