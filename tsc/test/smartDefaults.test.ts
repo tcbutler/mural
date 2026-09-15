@@ -156,3 +156,25 @@ test("recommendInfillDensity: backs off a step on a dark continuous-tone image",
     assert.equal(dark.infillDensity.value, 4, 'a dark image at the same setting costs far more ink');
     assert.match(dark.infillDensity.rationale, /dark image/);
 });
+
+test("recommendMarkMode: a solid flat image is told to trace, with the cost of not doing so", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "flat", midToneFraction: 0.01, meanDarkness: 0.35,
+    }));
+    assert.equal(d.markMode.value, "trace");
+    assert.match(d.markMode.rationale, /four times the line/);
+});
+
+test("recommendMarkMode: a photograph is pointed at the scribble walk", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "continuous-tone", continuousToneScore: 0.8, midToneFraction: 0.6,
+    }));
+    assert.equal(d.markMode.value, "greedy");
+});
+
+test("recommendMarkMode: a borderline image is left on the hatch fills", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "continuous-tone", continuousToneScore: 0.3, midToneFraction: 0.2,
+    }));
+    assert.equal(d.markMode.value, "trace");
+});

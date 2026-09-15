@@ -11,6 +11,7 @@ import { InfillDensity } from './types';
 import { FillStrategyName } from './fillStrategyNames';
 import { BACKGROUND_LUMINANCE_THRESHOLD } from './grayscale';
 import { ImageCharacteristics } from './imageCharacteristics';
+import { MarkMode } from './scribble/markModes';
 
 export type Recommendation<T> = {
     value: T;
@@ -29,6 +30,9 @@ export type SmartDefaults = {
     // Smallest mark worth drawing, across, in mm - see recommendDespeckleMm.
     despeckleMm: Recommendation<number>;
     hueGrouping: Recommendation<boolean>;
+    // Which way to draw the picture at all - see recommendMarkMode for why
+    // this one is advice rather than a default the UI applies for you.
+    markMode: Recommendation<MarkMode | 'trace'>;
 };
 
 function recommend<T>(value: T, rationale: string): Recommendation<T> {
@@ -265,6 +269,57 @@ function recommendHueGrouping(characteristics: ImageCharacteristics): Recommenda
     return recommend(true, 'Continuous-tone content often has many close shades of the same hue - grouping them onto shared pens keeps the physical pen count reasonable while preserving shading.');
 }
 
+// --- markMode -------------------------------------------------------------
+//
+// Whether this picture wants the trace-and-fill pipeline or one of the
+// whole-image mark-making modes (scribble/).
+//
+// Ported from the fitted rules in tools/scribble/defaults.py's suggest(),
+// which came out of a scored sweep over 23 test images plus 80 blind pairwise
+// human preferences across 5 sheets. What that work establishes, and what it
+// does not, decides the shape of this recommendation:
+//
+//   - It establishes that among the whole-image algorithms, the greedy walk
+//     wins on legibility (19 of 23 images, and a top-two slot on every blind
+//     sheet) and the TSP tour wins on cost (19 of 23), needing about 2.5x less
+//     line because a non-crossing tour never lays ink on ink.
+//   - It establishes that flat art with solid blacks is the wrong job for any
+//     of them: measured on a solid black page, the scribble drew 3.9x the line
+//     a plain hatch needs for the same coverage - 250 minutes against 48.
+//   - It does NOT establish that a scribble beats this app's own hatch on a
+//     photograph. The sweep compared the scribble algorithms against each
+//     other; gradientHatch was never in it.
+//
+// So this is the one recommendation the UI shows without applying: switching a
+// photograph to a scribble changes what the drawing IS and roughly triples the
+// plot time, and nothing measured says it is the better picture. Telling
+// someone what the modes are for is useful; choosing for them, on this
+// evidence, would not be.
+
+// A flat image with essentially no mid-tones - solid regions and bare paper,
+// which is what a hatch is for and what a density fill has nothing to
+// modulate.
+const FLAT_ENOUGH_MID_TONE_FRACTION = 0.05;
+// How much of a flat image has to be inked before the overdraw actually costs
+// something. Below this the solids are small and isolated, and either way of
+// drawing them is cheap.
+const SOLID_INK_SHARE = 0.15;
+
+function recommendMarkMode(characteristics: ImageCharacteristics): Recommendation<MarkMode | 'trace'> {
+    if (characteristics.classification === 'flat' && characteristics.midToneFraction < FLAT_ENOUGH_MID_TONE_FRACTION) {
+        if (characteristics.meanDarkness > SOLID_INK_SHARE) {
+            return recommend('trace', `About ${Math.round(characteristics.meanDarkness * 100)}% of this is solid ink with almost no mid-tones, so there is no density for a scribble to modulate - it would draw around four times the line a cross-hatch needs for the same coverage. Trace and fill it.`);
+        }
+        return recommend('trace', 'This is flat art with small isolated solids, which the hatch fills draw cleanly and cheaply. A scribble is available if you want the marks to read as hand-drawn rather than printed.');
+    }
+
+    if (characteristics.continuousToneScore >= GRADIENT_HATCH_RECOMMENDATION_THRESHOLD) {
+        return recommend('greedy', 'Continuous tone, which is what the mark-making modes are for. The scribble walk reads best of them - it took a top-two slot on every sheet a human ranked blind - at about three times the plot time of the single line. Both are under Mark making; the hatch fills are still a fine answer here.');
+    }
+
+    return recommend('trace', 'Only mildly continuous-tone, so the hatch fills have enough to work with. The mark-making modes are there if you want the look; they suit a photograph more than this.');
+}
+
 export function recommendDefaults(characteristics: ImageCharacteristics): SmartDefaults {
     return {
         whitePoint: recommendWhitePoint(characteristics),
@@ -274,5 +329,6 @@ export function recommendDefaults(characteristics: ImageCharacteristics): SmartD
         infillDensity: recommendInfillDensity(characteristics),
         despeckleMm: recommendDespeckleMm(characteristics),
         hueGrouping: recommendHueGrouping(characteristics),
+        markMode: recommendMarkMode(characteristics),
     };
 }

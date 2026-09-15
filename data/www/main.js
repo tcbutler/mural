@@ -1392,6 +1392,10 @@ function init() {
         $("label[for='turdSize'],#turdSize").show();
         $("#toneControls").show();
         $("label[for='markMode'],#markMode").show();
+        // The advice only exists once smart defaults have run for this image,
+        // and going back to the renderer picker hid it - so restore it if
+        // there is one rather than leaving a blank gap or a stale panel.
+        $("#markModeRationale").toggle(!!$("#markModeRationale").find('small').text());
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2635,6 +2639,15 @@ function applySmartDefaults(recommendations) {
     $("#hueGroupingCheckbox").prop("checked", recommendations.hueGrouping.value);
     $("#hueGroupingOptions").toggle(recommendations.hueGrouping.value);
     showRationale('#hueGroupingRationale', recommendations.hueGrouping.rationale);
+
+    // The one recommendation that is shown and not applied - see
+    // recommendMarkMode in tsc/src/smartDefaults.ts for why. Switching a
+    // picture to a scribble changes what the drawing is and roughly triples
+    // the plot time, and the research behind these modes ranked them against
+    // each other rather than against this app's own hatch fills. So the
+    // advice goes on screen and the choice stays with whoever is standing in
+    // front of the plotter.
+    showRationale('#markModeRationale', recommendations.markMode.rationale);
 }
 
 // Processing-time warning thresholds (seconds), applied to
