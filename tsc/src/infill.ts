@@ -4,6 +4,7 @@ import { applyWhiteKnockout } from './flattener';
 import { FillContext, GradientFieldLookup } from './fillStrategies/types';
 import { defaultFillStrategyName, fillStrategies } from './fillStrategies/registry';
 import { deserializeGradientField, sampleGradientField, SerializedGradientField } from './imageGradient';
+import { DEFAULT_NIB_WIDTH_MM } from './huePalette';
 
 const paper = loadPaper();
 
@@ -166,12 +167,13 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
 
         if (includeOutline) {
             if (path instanceof paper.Path) {
-                if (path.firstSegment && path.lastSegment) {
+                if (path.firstSegment && path.lastSegment && isWorthDrawing(path)) {
                     outlinePaths.push(path);
                 }
 
             } else {
-                const unwoundPaths = unwrapCompoundPath(path).filter(p => p.firstSegment && p.lastSegment);
+                const unwoundPaths = unwrapCompoundPath(path)
+                    .filter(p => p.firstSegment && p.lastSegment && isWorthDrawing(p));
                 outlinePaths.push(...unwoundPaths);
             }
         }
@@ -201,6 +203,38 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
     });
 
     return infilledPaths;
+}
+
+// Smallest outline worth lifting the pen for, as a fraction of the nib's own
+// width.
+//
+// A traced region smaller than the pen cannot be drawn as anything but a blot:
+// whether the machine traces its outline or simply touches down once, the mark
+// on the paper is a single dot of ink the width of the nib. Tracing it costs a
+// pen-down and a pen-up (about two seconds each) plus the travel to reach it,
+// for a mark that is indistinguishable either way.
+//
+// That is invisible on flat artwork, which traces to a handful of large shapes.
+// It is not invisible on a photograph: a four-level greyscale trace of the
+// horse fixture at a 2400px raster produces 3,192 outlines, of which 2,106 are
+// under a millimetre across. At four seconds of pen transitions each, that is
+// over two hours of the plot spent dotting - which is what it looked like on
+// the machine, and why this exists.
+//
+// Set at one nib width rather than lower because that is the size at which the
+// question stops being about geometry: below it there is no mark to lose.
+// Above it, a small stroke is still a stroke and is left alone.
+const MIN_OUTLINE_SPAN_MM = DEFAULT_NIB_WIDTH_MM;
+
+/**
+ * Drops outlines too small to draw as anything but a dot.
+ *
+ * Measured across the bounding box rather than by path length, because it is
+ * the mark's size on the paper that decides this: a long wandering path inside
+ * a half-millimetre box still lands as one blot.
+ */
+function isWorthDrawing(path: paper.Path): boolean {
+    return Math.max(path.bounds.width, path.bounds.height) >= MIN_OUTLINE_SPAN_MM;
 }
 
 function unwrapCompoundPath(path: paper.CompoundPath) {
