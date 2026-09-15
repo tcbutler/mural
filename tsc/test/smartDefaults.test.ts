@@ -30,14 +30,32 @@ function makeCharacteristics(overrides: Partial<ImageCharacteristics>): ImageCha
     };
 }
 
-test("recommendDefaults: a flat/vector-ish image gets crossHatch45, no hue grouping, and a small turdSize", () => {
+test("recommendDefaults: a flat/vector-ish image gets crossHatch45, no hue grouping, and a small despeckle", () => {
     const flat = makeCharacteristics({});
     const defaults = recommendDefaults(flat);
 
     assert.equal(defaults.fillStrategy.value, "crossHatch45");
     assert.equal(defaults.hueGrouping.value, false);
-    assert.ok(defaults.turdSize.value <= 3);
+    // Millimetres across on the paper, not pixels of source area - deliberate
+    // edges are worth keeping, so the threshold stays under the nib.
+    assert.ok(defaults.despeckleMm.value <= 1);
     assert.ok(defaults.colorCount.value >= 2 && defaults.colorCount.value <= 6);
+});
+
+test("recommendDefaults: a photograph gets a despeckle big enough to matter, and a bounded one", () => {
+    // The old pixel-area recommendation came out sub-millimetre at any
+    // realistic photo resolution, which is why it never removed the specks it
+    // was there for.
+    const photo = makeCharacteristics({
+        colorConcentration: 0.2,
+        flatFraction: 0.1,
+        edgeFraction: 0.35,
+        classification: "continuous-tone",
+    });
+    const defaults = recommendDefaults(photo);
+
+    assert.ok(defaults.despeckleMm.value >= 1.2, `expected at least a nib width, got ${defaults.despeckleMm.value}mm`);
+    assert.ok(defaults.despeckleMm.value <= 2.5, `expected a ceiling, got ${defaults.despeckleMm.value}mm`);
 });
 
 test("recommendDefaults: a strongly continuous-tone image gets gradientHatch, hue grouping, and a denser infill", () => {

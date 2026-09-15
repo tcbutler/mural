@@ -377,12 +377,16 @@
             <input type="range" class="form-range mb-2 text-center" min="0" max="7" step="1" id="infillDensity" value="0">
             <div id="infillDensityRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
 
-            <label for="turdSize" class="form-label mb-0">Despeckle
+            <label for="turdSize" class="form-label mb-0">Despeckle <span class="tone-readout" id="turdSizeValue">0.5mm</span>
               <details class="info" name="muralInfo"><summary>i</summary>
-                <div class="info-panel">Despeckle drops tiny specks too small to matter, so the pen lifts less and finishes faster.</div>
+                <div class="info-panel">Despeckle drops marks smaller than this across, so the pen doesn't spend its time dotting. A photograph traces its grain as thousands of specks, and each one costs a pen-down, a pen-up and the travel to reach it. It is set in millimetres on the paper, so it means the same thing whatever size the image file is.</div>
               </details>
             </label>
-            <input type="range" class="form-range mb-2 text-center" min="2" max="200" step="11" id="turdSize" value="2">
+            <!-- Millimetres across, not Potrace's pixel area - see
+                 tsc/src/despeckle.ts. The same pixel setting meant a 3mm speck
+                 on one image and a 0.7mm speck on another, purely from how
+                 large the file was. -->
+            <input type="range" class="form-range mb-2 text-center" min="0.3" max="5" step="0.1" id="turdSize" value="0.5">
             <div id="turdSizeRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
 
             <label class="form-label mb-0" id="colorModeLabel">Color mode</label>

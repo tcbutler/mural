@@ -845,7 +845,7 @@ function init() {
             showTargetSizeWarning(null);
             $(".svg-control").hide();
             $("#infillDensity").val(0);
-            $("#turdSize").val(2);
+            $("#turdSize").val(0.5);
             $("#whitePoint").val(1);
             $("#warmth").val(0);
             updateToneReadouts();
@@ -1006,7 +1006,10 @@ function init() {
         const vectorizeRequest = {
             type: 'vectorize',
             raster,
-            turdSize: getTurdSize(),
+            despeckleMm: getDespeckleMm(),
+            // What makes the millimetres convertible: the tracer sees pixels,
+            // and only the plot size says how big a pixel is.
+            drawWidthMm: svgControl.getTargetWidth(),
             // Tone preparation, applied to the raster before any of the modes
             // below see it - see getWhitePoint/getWarmth. The worker drops
             // warmth itself on the colour path (tonePreparation.ts's
@@ -1294,7 +1297,7 @@ function init() {
         $("#hueGroupingOptions").toggle($(this).is(":checked"));
     });
 
-    $("#whitePoint,#warmth").on('input change', updateToneReadouts);
+    $("#whitePoint,#warmth,#turdSize").on('input change', updateToneReadouts);
 
     $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
     // The drawing's box changes with the window and when the preview is
@@ -2377,8 +2380,13 @@ function getInfillDensity() {
     }
 }
 
-function getTurdSize() {
-    return parseInt($("#turdSize").val());
+// Despeckle, in millimetres across on the paper (tsc/src/despeckle.ts turns
+// it into the pixel area the tracer wants). The control keeps its old id so
+// the rest of the wiring - smart defaults, dirty-marking, the renderer-mode
+// show/hide - does not have to care that its units changed.
+function getDespeckleMm() {
+    const value = parseFloat($("#turdSize").val());
+    return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 // Tone preparation (tsc/src/tonePreparation.ts): what the pipeline draws
@@ -2403,6 +2411,9 @@ function getWarmth() {
 function updateToneReadouts() {
     const whitePoint = parseFloat($("#whitePoint").val());
     $("#whitePointValue").text(Number.isFinite(whitePoint) ? `${Math.round(whitePoint * 100)}%` : '');
+
+    const despeckle = parseFloat($("#turdSize").val());
+    $("#turdSizeValue").text(Number.isFinite(despeckle) ? `${despeckle}mm` : '');
 
     const warmth = parseFloat($("#warmth").val());
     $("#warmthValue").text(!Number.isFinite(warmth) || warmth <= 0 ? 'off' : `${Math.round(warmth * 100)}%`);
@@ -2554,8 +2565,8 @@ function applySmartDefaults(recommendations) {
     $("#infillDensity").val(recommendations.infillDensity.value);
     showRationale('#infillDensityRationale', recommendations.infillDensity.rationale);
 
-    $("#turdSize").val(recommendations.turdSize.value);
-    showRationale('#turdSizeRationale', recommendations.turdSize.rationale);
+    $("#turdSize").val(recommendations.despeckleMm.value);
+    showRationale('#turdSizeRationale', recommendations.despeckleMm.rationale);
 
     $("#colorCount").val(clampColorCountOption(recommendations.colorCount.value));
     showRationale('#colorCountRationale', recommendations.colorCount.rationale);

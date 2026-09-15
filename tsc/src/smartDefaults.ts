@@ -26,7 +26,8 @@ export type SmartDefaults = {
     colorCount: Recommendation<number>;
     fillStrategy: Recommendation<FillStrategyName>;
     infillDensity: Recommendation<InfillDensity>;
-    turdSize: Recommendation<number>;
+    // Smallest mark worth drawing, across, in mm - see recommendDespeckleMm.
+    despeckleMm: Recommendation<number>;
     hueGrouping: Recommendation<boolean>;
 };
 
@@ -208,25 +209,43 @@ function recommendInfillDensity(characteristics: ImageCharacteristics): Recommen
     );
 }
 
-// --- turdSize (despeckle) ------------------------------------------------
+// --- despeckle ------------------------------------------------------------
 //
-// Potrace's turdSize (vectorizer.ts's vectorizeImageData) drops
-// traced regions below this pixel-area threshold - useful for suppressing
-// noise, harmful if it eats real fine detail. Flat art has clean, deliberate
-// edges (edgeFraction is a real signal, not noise), so a small threshold is
-// safe. Continuous-tone/photographic content - especially with visible
-// texture/edge activity - is much more likely to trace a lot of true noise
-// (JPEG artifacts, film grain, sensor noise) as tiny spurious regions, so a
-// higher threshold scaled by edgeFraction cleans that up.
-function recommendTurdSize(characteristics: ImageCharacteristics): Recommendation<number> {
+// The smallest mark worth drawing, measured across, in millimetres on the
+// paper (despeckle.ts converts it for the tracer). Flat art has clean,
+// deliberate edges, so a small threshold is safe and a large one would eat
+// real detail. A photograph traces a great deal of true noise - grain, sensor
+// speckle, JPEG artefacts - as tiny spurious regions, and each one costs a
+// pen-down, a pen-up and the travel to reach it.
+//
+// Measured on a four-level trace of the horse fixture at 400mm wide, the
+// ladder is worth knowing before reading the numbers below: 0.5mm leaves 853
+// outlines, 1.5mm leaves 365, 2mm leaves 202, 3mm leaves 92 - and the ink
+// barely moves across that whole range (29.4m to 26.4m), because what is being
+// dropped is specks. 1.5mm is the knee: half the pen lifts for three percent
+// of the ink.
+//
+// The same figures at a 1200px raster come out within a few percent of the
+// 2400px ones, which is the point of the unit. Set in pixels they differed by
+// a factor of sixteen.
+const FLAT_ART_DESPECKLE_MM = 0.5;
+const PHOTO_DESPECKLE_BASE_MM = 0.8;
+const PHOTO_DESPECKLE_PER_EDGE_MM = 3.5;
+const PHOTO_DESPECKLE_CEILING_MM = 2.5;
+
+function recommendDespeckleMm(characteristics: ImageCharacteristics): Recommendation<number> {
     if (characteristics.classification === 'flat') {
-        return recommend(2, 'Flat art has clean, deliberate edges, so a small despeckle threshold is enough to drop stray single-pixel noise without losing real detail.');
+        return recommend(FLAT_ART_DESPECKLE_MM, `Flat art has clean, deliberate edges, so dropping marks under ${FLAT_ART_DESPECKLE_MM}mm clears stray noise without losing anything that was drawn on purpose.`);
     }
 
-    const value = Math.round(2 + characteristics.edgeFraction * 10);
+    const value = Math.min(
+        PHOTO_DESPECKLE_CEILING_MM,
+        PHOTO_DESPECKLE_BASE_MM + characteristics.edgeFraction * PHOTO_DESPECKLE_PER_EDGE_MM,
+    );
+    const rounded = Math.round(value * 10) / 10;
     return recommend(
-        value,
-        'Continuous-tone/photographic sources often trace a lot of sensor/compression noise as tiny spurious regions, so a higher despeckle threshold cleans that up.',
+        rounded,
+        `Photographs trace their grain and compression noise as thousands of specks, and each one costs a pen-down and a pen-up for a dot. Dropping anything under ${rounded}mm across removes most of them and almost none of the ink.`,
     );
 }
 
@@ -253,7 +272,7 @@ export function recommendDefaults(characteristics: ImageCharacteristics): SmartD
         colorCount: recommendColorCount(characteristics),
         fillStrategy: recommendFillStrategy(characteristics),
         infillDensity: recommendInfillDensity(characteristics),
-        turdSize: recommendTurdSize(characteristics),
+        despeckleMm: recommendDespeckleMm(characteristics),
         hueGrouping: recommendHueGrouping(characteristics),
     };
 }

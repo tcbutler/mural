@@ -4,6 +4,7 @@ import { computePlacementOffset, offsetCommands } from "./placement";
 import { renderSvgJsonToCommands } from "./toCommands";
 import { vectorizeGrayscale, vectorizeImageData, vectorizeImageDataColor, withGradientField } from './vectorizer';
 import { needsPreparation, prepareTone, preparationFor } from './tonePreparation';
+import { despecklePixels } from './despeckle';
 import { InfillDensities, RequestTypes } from "./types";
 import { applyHueGrouping, applyHueGroupingWithOverrides } from './huePalette';
 import { estimateAndRecommend, CostEstimatorOptions } from './costEstimator';
@@ -68,12 +69,20 @@ function vectorize(request: RequestTypes.VectorizeRequest) {
     const prep = preparationFor(request);
     const raster = needsPreparation(prep) ? prepareTone(request.raster, prep) : request.raster;
 
+    // Despeckle is asked for in millimetres on the paper and handed to the
+    // tracer in pixels of source area (despeckle.ts). Resolved once, here, for
+    // the same reason the tone preparation is: every branch below wants the
+    // same answer.
+    const turdSize = request.despeckleMm !== undefined
+        ? despecklePixels(request.despeckleMm, raster.width, request.drawWidthMm)
+        : request.turdSize;
+
     // grayscaleLevels and colorCount are mutually exclusive tonal/color
     // separation modes; grayscale wins if both are somehow set. Either
     // absent (or colorCount < 2) preserves the original single 1-bit-mask
     // behavior exactly.
     if (request.grayscaleLevels) {
-        const svgString = vectorizeGrayscale(raster, request.turdSize, request.grayscaleLevels);
+        const svgString = vectorizeGrayscale(raster, turdSize, request.grayscaleLevels);
         self.postMessage({
             type: "vectorizer",
             payload: {
@@ -89,7 +98,7 @@ function vectorize(request: RequestTypes.VectorizeRequest) {
     }
 
     if (request.colorCount && request.colorCount >= 2) {
-        const rawResult = vectorizeImageDataColor(raster, request.turdSize, request.colorCount, request.palette);
+        const rawResult = vectorizeImageDataColor(raster, turdSize, request.colorCount, request.palette);
         // Tag before any hue-grouping remap below: remapSvgGroups only
         // rewrites the per-mask `<g data-paper-data='...'>` tags (see
         // huePalette.ts), never the root `<svg>` tag this adds its own
@@ -135,7 +144,7 @@ function vectorize(request: RequestTypes.VectorizeRequest) {
         return;
     }
 
-    const svgString = vectorizeImageData(raster, request.turdSize);
+    const svgString = vectorizeImageData(raster, turdSize);
     self.postMessage({
         type: "vectorizer",
         payload: {
@@ -203,7 +212,11 @@ function isVectorizeRequest(obj: any): obj is RequestTypes.VectorizeRequest {
         return false;
     }
 
-    if (!('turdSize' in obj) || typeof obj.turdSize !== 'number') {
+    // One of the two despeckle fields has to be a number: despeckleMm is the
+    // one to send, turdSize is what older callers still do.
+    const hasTurdSize = 'turdSize' in obj && typeof obj.turdSize === 'number';
+    const hasDespeckleMm = 'despeckleMm' in obj && typeof obj.despeckleMm === 'number';
+    if (!hasTurdSize && !hasDespeckleMm) {
         return false;
     }
 

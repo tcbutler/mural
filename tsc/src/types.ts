@@ -177,7 +177,21 @@ export namespace RequestTypes {
     export type VectorizeRequest = {
         type: 'vectorize',
         raster: ImageData,
+        // Despeckle, as Potrace wants it: the area in SOURCE PIXELS below
+        // which a traced region is dropped. Still accepted, and still what
+        // reaches the tracer, but `despeckleMm` below is the one to set - see
+        // despeckle.ts for why a pixel area is the wrong unit to ask a person
+        // for.
         turdSize: number,
+        // Despeckle in millimetres ACROSS, on the paper. Takes priority over
+        // turdSize when the physical size is also known (drawWidthMm, or the
+        // estimator's default plot width), because it means the same thing
+        // whatever the source image's resolution.
+        despeckleMm?: number,
+        // Physical width of the plot, in mm - what makes despeckleMm
+        // convertible. The renderer learns this from the request that follows;
+        // the vectorizer has to be told.
+        drawWidthMm?: number,
         // Tone preparation (tonePreparation.ts), applied to `raster` before
         // any quantization or tracing so every mode below sees the same
         // prepared image. Both omitted preserves existing behaviour exactly.
