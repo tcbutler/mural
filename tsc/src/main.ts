@@ -5,6 +5,9 @@ import { renderSvgJsonToCommands } from "./toCommands";
 import { vectorizeGrayscale, vectorizeImageData, vectorizeImageDataColor, withGradientField } from './vectorizer';
 import { needsPreparation, prepareTone, preparationFor } from './tonePreparation';
 import { despecklePixels } from './despeckle';
+import { isMarkMode, scribbleToSvgString } from './scribble';
+import { DEFAULT_NIB_WIDTH_MM } from './huePalette';
+import { DEFAULT_DRAW_WIDTH_MM } from './costEstimator';
 import { InfillDensities, RequestTypes } from "./types";
 import { applyHueGrouping, applyHueGroupingWithOverrides } from './huePalette';
 import { estimateAndRecommend, CostEstimatorOptions } from './costEstimator';
@@ -76,6 +79,23 @@ function vectorize(request: RequestTypes.VectorizeRequest) {
     const turdSize = request.despeckleMm !== undefined
         ? despecklePixels(request.despeckleMm, raster.width, request.drawWidthMm)
         : request.turdSize;
+
+    // Whole-image mark making (scribble/) comes first, because it replaces the
+    // trace rather than configuring it: there are no regions to quantize into
+    // levels or masks, only strokes. Tone preparation above still applies -
+    // the white point and the colour filter decide what the picture IS, which
+    // matters here as much as anywhere.
+    if (isMarkMode(request.markMode)) {
+        updateStatusFn(request.markMode === 'tsp' ? 'Stippling' : 'Scribbling');
+        const svgString = scribbleToSvgString(raster, {
+            mode: request.markMode,
+            drawWidthMm: request.drawWidthMm ?? DEFAULT_DRAW_WIDTH_MM,
+            penWidthMm: request.nibWidthMmForMarks ?? DEFAULT_NIB_WIDTH_MM,
+            seed: request.markSeed,
+        });
+        self.postMessage({ type: "vectorizer", payload: { svg: svgString } });
+        return;
+    }
 
     // grayscaleLevels and colorCount are mutually exclusive tonal/color
     // separation modes; grayscale wins if both are somehow set. Either

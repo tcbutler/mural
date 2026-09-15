@@ -192,6 +192,19 @@ export namespace RequestTypes {
         // convertible. The renderer learns this from the request that follows;
         // the vectorizer has to be told.
         drawWidthMm?: number,
+        // Whole-image mark making (src/scribble/), as an alternative to
+        // tracing the image into regions at all. 'greedy' walks the picture
+        // laying strokes where it still owes ink; 'tsp' stipples it and joins
+        // every dot with one tour. Both read the raster and emit strokes, so
+        // they replace the trace rather than adding to it: grayscaleLevels,
+        // colorCount and the fill strategies have nothing to act on and are
+        // ignored. Omitted leaves every existing mode exactly as it was.
+        markMode?: string,
+        // Seed for the mark-making walk. These algorithms are random by
+        // construction, so the seed is what makes a preview predict the plot.
+        markSeed?: number,
+        // Nib width in mm, for the walk's ink accounting.
+        nibWidthMmForMarks?: number,
         // Tone preparation (tonePreparation.ts), applied to `raster` before
         // any quantization or tracing so every mode below sees the same
         // prepared image. Both omitted preserves existing behaviour exactly.
