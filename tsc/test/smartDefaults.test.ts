@@ -21,6 +21,9 @@ function makeCharacteristics(overrides: Partial<ImageCharacteristics>): ImageCha
         // actually about.
         whiteHeadroom: 0.4,
         meanDarkness: 0.15,
+        // What that darkness works out to as ink length - see
+        // imageCharacteristics.ts's meanInkDemand.
+        meanInkDemand: 0.3,
         paperLuminance: 1,
         chroma: 0.02,
         chromaticFraction: 0,

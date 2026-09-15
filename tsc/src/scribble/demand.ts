@@ -46,6 +46,30 @@ export const MAX_WORKING_LONG_EDGE_PX = 1600;
 // naturally wants less ink is left alone.
 export const DEFAULT_INK_CEILING = 0.22;
 
+/**
+ * The working map's dimensions for a given source and plot size.
+ *
+ * Its own function because the pre-render estimate has to know the map the
+ * render is going to build (scribble/projection.ts) - every cost in these
+ * algorithms is per map pixel - and a second copy of this arithmetic would be
+ * a second thing to keep in step.
+ */
+export function demandMapSize(
+    sourceWidthPx: number,
+    sourceHeightPx: number,
+    drawWidthMm: number,
+    pixelsPerMm = DEFAULT_PIXELS_PER_MM,
+): { width: number; height: number } {
+    // Wanted width from the paper, then capped, then never upsampled: asking
+    // for more pixels than the source has would invent detail rather than read
+    // it.
+    const aspect = Math.max(0, sourceHeightPx) / Math.max(1, sourceWidthPx);
+    const cap = Math.min(MAX_WORKING_LONG_EDGE_PX, MAX_WORKING_LONG_EDGE_PX / Math.max(1, aspect));
+    const wantedWidth = Math.min(Math.max(0, drawWidthMm) * pixelsPerMm, cap);
+    const width = Math.max(1, Math.round(Math.min(wantedWidth, Math.max(1, sourceWidthPx))));
+    return { width, height: Math.max(1, Math.round(width * aspect)) };
+}
+
 export type DemandOptions = {
     /** Physical width of the plot, in mm - what makes stroke lengths mean anything. */
     drawWidthMm: number;
@@ -54,6 +78,11 @@ export type DemandOptions = {
     /** Ceiling on the average ink demand. */
     inkCeiling?: number;
 };
+
+// Bisection steps the gamma solve takes. Exported because the pre-render
+// estimate has to charge for them - at a full pass over the map each, they are
+// most of what building a demand map costs (processingEstimator.ts).
+export const GAMMA_SOLVE_ITERATIONS = 28;
 
 /**
  * Gamma that brings the mean of `values ** gamma` down to `target`.
@@ -65,7 +94,7 @@ export type DemandOptions = {
  * number: a half-black page cannot reach a 0.2 ceiling by gamma alone, and the
  * right answer there is a darker drawing, not a flat one.
  */
-export function solveInkGamma(values: Float32Array, target: number, iterations = 28): number {
+export function solveInkGamma(values: Float32Array, target: number, iterations = GAMMA_SOLVE_ITERATIONS): number {
     let sum = 0;
     for (let i = 0; i < values.length; i++) sum += values[i];
     const mean = sum / Math.max(1, values.length);
@@ -95,14 +124,7 @@ export function inkDemand(imageData: ImageData, options: DemandOptions): DemandM
     const pixelsPerMm = options.pixelsPerMm ?? DEFAULT_PIXELS_PER_MM;
     const inkCeiling = options.inkCeiling ?? DEFAULT_INK_CEILING;
 
-    // Wanted width from the paper, then capped, then never upsampled: asking
-    // for more pixels than the source has would invent detail rather than read
-    // it.
-    const aspect = imageData.height / Math.max(1, imageData.width);
-    const cap = Math.min(MAX_WORKING_LONG_EDGE_PX, MAX_WORKING_LONG_EDGE_PX / Math.max(1, aspect));
-    const wantedWidth = Math.min(options.drawWidthMm * pixelsPerMm, cap);
-    const width = Math.max(1, Math.round(Math.min(wantedWidth, imageData.width)));
-    const height = Math.max(1, Math.round(width * aspect));
+    const { width, height } = demandMapSize(imageData.width, imageData.height, options.drawWidthMm, pixelsPerMm);
 
     const demand = new Float32Array(width * height);
     const source = imageData.data;

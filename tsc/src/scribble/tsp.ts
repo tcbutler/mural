@@ -55,8 +55,8 @@ export type TspOptions = {
     random: Random;
 };
 
-const DEFAULT_POINTS = 6000;
-const DEFAULT_RELAXATION_PASSES = 12;
+export const DEFAULT_POINTS = 6000;
+export const DEFAULT_RELAXATION_PASSES = 12;
 const DEFAULT_NEIGHBOURS = 10;
 // Converged long before this on every image tried - the horse's tour stops
 // improving after ten - but the pass is cheap and the cap is what guarantees

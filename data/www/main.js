@@ -2661,10 +2661,16 @@ function renderProcessingEstimate(processing) {
     textContainer.show();
 
     if (seconds >= PROCESSING_SEVERE_WARNING_SECONDS) {
+        // What to do about it depends on which pipeline is running: a
+        // scribble has no infill density or fill style to turn down, and its
+        // cost is set by the size of the paper and how dark the picture is
+        // (tsc/src/scribble/projection.ts).
+        const remedy = getMarkMode()
+            ? `A smaller plot size, a brighter paper setting, or the other mark-making mode will speed it up`
+            : `A lower infill density, a cheaper fill style, or fewer colors will speed it up`;
         warningContainer.text(
             `This could take a while on this device (~${formatDuration(seconds)}) - the page may look ` +
-            `unresponsive while it works. A lower infill density, a cheaper fill style, or fewer colors ` +
-            `will speed it up, or you can just wait it out.`
+            `unresponsive while it works. ${remedy}, or you can just wait it out.`
         ).show();
     } else if (seconds >= PROCESSING_WARNING_SECONDS) {
         warningContainer.text(`Processing may take ~${formatDuration(seconds)} on this device.`).show();
@@ -2704,6 +2710,17 @@ async function runProcessingEstimate() {
             // will actually get.
             whitePoint: getWhitePoint() ?? 1,
             warmth: getWarmth() ?? 0,
+            // Mark making is a different pipeline, not a different setting, so
+            // the estimate has to know about it or it describes a trace and an
+            // infill that are not going to happen (tsc/src/scribble/
+            // projection.ts).
+            markMode: getMarkMode(),
+            penWidthMm: getNibWidthMm(),
+            // A scribble's cost is set by the size of the paper more than by
+            // anything else - the strokes are physical - so the estimate needs
+            // the real plot size rather than the estimator's generic fallback.
+            drawWidthMm: svgControl.getTargetWidth(),
+            drawHeightMm: svgControl.getTargetHeight(),
         };
         const result = await estimateInWorker(currentRaster, options);
         lastEstimate = result;

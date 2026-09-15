@@ -63,6 +63,16 @@ export type ImageCharacteristics = {
     // density setting a dark photograph costs several times what a light one
     // does, which nothing in the recommendations used to notice.
     meanDarkness: number;
+    // Mean ink LENGTH the image asks for, per unit area - the same tone read
+    // through the coverage law rather than straight (scribble/demand.ts's
+    // inkLengthFor). Ink landing on ink covers no new paper, so a region
+    // wanting 90% coverage needs far more than 0.9 units of line through it,
+    // and that transform is convex: this is nowhere near inkLengthFor of
+    // meanDarkness, and the difference is a factor of two on a picture whose
+    // darkness sits in a few strong areas. It is what the mark-making modes
+    // are paying off, so it is what their cost projection is built on
+    // (scribble/projection.ts).
+    meanInkDemand: number;
     // Luminance of the image's brightest real tone (98th percentile, so a
     // handful of blown highlights cannot speak for the whole frame). This
     // is what the paper is *actually* reading as.
@@ -82,6 +92,7 @@ export type ImageCharacteristics = {
 };
 
 import { compositedLuminance } from './grayscale';
+import { inkLengthFor } from './scribble/demand';
 
 // Quantization levels per RGB channel for the color-concentration
 // histogram. 5 levels/channel (125 buckets) is coarse enough that
@@ -256,19 +267,23 @@ const CHROMATICITY_BINS = 16;
 // luminance difference says nothing about subject versus background.
 const MIN_CHROMATICITY_SEPARATION = 0.06;
 
-function computePaperStatistics(luminance: Float32Array): { whiteHeadroom: number; paperLuminance: number; meanDarkness: number } {
-    if (luminance.length === 0) return { whiteHeadroom: 0, paperLuminance: 0, meanDarkness: 0 };
+function computePaperStatistics(luminance: Float32Array): {
+    whiteHeadroom: number; paperLuminance: number; meanDarkness: number; meanInkDemand: number;
+} {
+    if (luminance.length === 0) return { whiteHeadroom: 0, paperLuminance: 0, meanDarkness: 0, meanInkDemand: 0 };
 
     // A 256-bin histogram rather than a sort: exact enough for a percentile
     // at this scale and linear in the pixel count.
     const bins = new Uint32Array(256);
     let bright = 0;
     let darknessSum = 0;
+    let inkSum = 0;
     for (let i = 0; i < luminance.length; i++) {
         const v = luminance[i];
         bins[Math.min(255, Math.max(0, Math.round(v * 255)))]++;
         if (v > PAPER_LUMINANCE_THRESHOLD) bright++;
         darknessSum += 1 - v;
+        inkSum += inkLengthFor(1 - v);
     }
 
     const target = luminance.length * 0.98;
@@ -283,6 +298,7 @@ function computePaperStatistics(luminance: Float32Array): { whiteHeadroom: numbe
         whiteHeadroom: bright / luminance.length,
         paperLuminance: paperBin / 255,
         meanDarkness: darknessSum / luminance.length,
+        meanInkDemand: inkSum / luminance.length,
     };
 }
 
@@ -374,7 +390,7 @@ export function analyzeImageCharacteristics(imageData: ImageData): ImageCharacte
     const { luminance, opaqueFraction } = buildLuminanceBuffer(imageData);
     const { colorConcentration, estimatedDistinctColors } = computeColorConcentration(imageData);
     const { flatFraction, edgeFraction, midToneFraction } = computeGradientFractions(luminance, width, height);
-    const { whiteHeadroom, paperLuminance, meanDarkness } = computePaperStatistics(luminance);
+    const { whiteHeadroom, paperLuminance, meanDarkness, meanInkDemand } = computePaperStatistics(luminance);
     const colour = computeColorSeparation(imageData, luminance);
 
     const continuousToneScore = computeContinuousToneScore(midToneFraction, colorConcentration);
@@ -393,6 +409,7 @@ export function analyzeImageCharacteristics(imageData: ImageData): ImageCharacte
         classification,
         whiteHeadroom,
         meanDarkness,
+        meanInkDemand,
         paperLuminance,
         chroma: colour.chroma,
         chromaticFraction: colour.chromaticFraction,

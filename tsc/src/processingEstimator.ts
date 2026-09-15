@@ -17,6 +17,9 @@ import { InfillDensity } from './types';
 import { FillStrategyName } from './fillStrategyNames';
 import { spacingMmForDensity, projectSegmentCounts, SegmentProjection } from './segmentModel';
 import { calibrateDeviceSpeed, DeviceCalibration } from './deviceCalibration';
+import { GAMMA_SOLVE_ITERATIONS } from './scribble/demand';
+import { DEFAULT_RELAXATION_PASSES } from './scribble/tsp';
+import { ScribbleProjection } from './scribble/projection';
 
 export type ProcessingEstimateInputs = {
     // Source raster dimensions - drives every per-pixel stage (vectorize's
@@ -78,6 +81,14 @@ export type ProcessingEstimateInputs = {
     // for the measurements).
     drawWidthMm?: number;
     drawHeightMm?: number;
+    // A whole-image mark-making render (scribble/), which is a different
+    // pipeline rather than a different setting: no trace, no knockout, no
+    // infill, and a stage of its own instead. When this is set every
+    // trace-derived stage above is skipped - see estimateScribbleSeconds and
+    // scribble/projection.ts for what replaces them. costEstimator.ts builds
+    // the projection, since it is the one holding the image statistics it
+    // needs.
+    scribble?: ScribbleProjection;
 };
 
 export type ProcessingEstimateBreakdown = {
@@ -86,6 +97,11 @@ export type ProcessingEstimateBreakdown = {
     infillSeconds: number;
     optimizeSeconds: number;
     renderSimplifyDedupeSeconds: number;
+    // The mark-making modes' own stage: building the ink demand map, walking
+    // it, and stitching what comes out (scribble/). Zero on a traced render,
+    // and on a scribble it is vectorize/flattenKnockout/infill that are zero
+    // instead - the two paths are alternatives, never both.
+    scribbleSeconds: number;
 };
 
 export type ProcessingEstimate = {
@@ -422,6 +438,100 @@ function estimateRenderSimplifyDedupeSeconds(totalDrawSegments: number): number 
     return (totalDrawSegments * RENDER_SIMPLIFY_DEDUPE_US_PER_SEGMENT) / 1e6;
 }
 
+// --- Stage 6: the mark-making modes (scribble/) -------------------------
+//
+// A scribble is not a trace with a fill on it, so none of the coefficients
+// above describe it. What it does instead: read every source pixel into an
+// ink-demand map, possibly solve a gamma over that map, walk it, stitch the
+// pieces, and hand the renderer a handful of paths carrying tens of thousands
+// of points.
+//
+// MEASURED 2026-09-15 via tsc/bench/runBenchmarks.ts's benchScribble: both
+// modes x three plot sizes (300/600/900mm) x four rasters (a traced-clipart
+// horse at two resolutions, a flat-colour cartoon, and a synthetic ramp whose
+// tone is spread over the whole frame instead of concentrated). Each
+// coefficient's own measured spread is noted with it.
+//
+// One correction applied to all of them: unlike every other constant in this
+// file, these were not timed on the M5 Pro reference machine. The machine they
+// were timed on measured a device factor of 1.216 (deviceCalibration.ts's own
+// calibrateDeviceSpeed, run on the same build in the same session), so each
+// measurement below is divided by that to put it in reference-machine units -
+// which is what the estimator then multiplies back up by the device it is
+// actually running on. The raw measured figures are quoted alongside each
+// constant, so a later re-measurement on the reference machine itself can
+// check the correction rather than having to trust it.
+
+// The demand map's box average reads every SOURCE pixel once, whatever
+// resolution the map itself ends up at (demand.ts). MEASURED (raw) 0.025-0.058
+// us/px on the runs where no gamma solve followed it to muddy the reading -
+// 0.04 raw, corrected below.
+export const DEMAND_MAP_US_PER_SOURCE_PIXEL = 0.033;
+
+// The ink gamma is a bisection: GAMMA_SOLVE_ITERATIONS full passes raising
+// every MAP pixel to a power (demand.ts's solveInkGamma). It dominates the
+// demand stage whenever it runs - and it only runs when the image is darker
+// than the ink ceiling, which is why the projection carries that flag rather
+// than this stage assuming it. MEASURED (raw) 1.09-2.52 us per map pixel across
+// the whole solve, i.e. ~0.05us per pixel per iteration; the spread tracks how
+// varied the image's tones are. 1.5 raw, corrected.
+export const INK_GAMMA_US_PER_MAP_PIXEL = 1.23;
+
+// The greedy walk, per stroke it draws. Two terms because the work per stroke
+// genuinely has two parts (greedy.ts):
+//   - scoring is a fixed 24 candidates x 20 samples, whatever the map's scale.
+//   - paying the ink in covers a band of map pixels whose count scales as
+//     1/mmPerPixel^2 - the same stroke on a finer map touches more pixels.
+// MEASURED by fitting per-stroke cost against 1/mmPerPixel^2 across the 12
+// greedy runs: raw 15.5us fixed + 34.5us at one map pixel per mm, predicting
+// each run's own total within 0.72-1.56x.
+export const GREEDY_US_PER_STROKE = 13;
+export const GREEDY_PAY_US_PER_STROKE_AT_1MM_PER_PIXEL = 28;
+
+// The TSP tour is dominated by Lloyd relaxation, which assigns every INKED map
+// pixel to its nearest point once per pass (tsp.ts's stipple). MEASURED (raw)
+// 0.32-0.72 us per inked pixel per pass, taking the inked fraction as
+// (1 - whiteHeadroom). 0.5 raw, corrected.
+export const TSP_US_PER_INKED_PIXEL_PER_PASS = 0.41;
+
+// The stitcher is a greedy nearest-neighbour ordering over the pieces the
+// algorithm emitted - O(pieces^2) plain distance comparisons (stitch.ts).
+// MEASURED (raw) 0.050-0.058 us per pair across the 12 greedy runs, which is
+// about as tight as anything in this file; 0.053 raw, corrected.
+export const STITCH_US_PER_CHAIN_PAIR = 0.044;
+
+function estimateScribbleSeconds(scribble: ScribbleProjection, sourcePixels: number): number {
+    const demandSeconds = (sourcePixels * DEMAND_MAP_US_PER_SOURCE_PIXEL
+        + (scribble.gammaSolved ? scribble.mapPixels * INK_GAMMA_US_PER_MAP_PIXEL : 0)) / 1e6;
+
+    const algorithmUs = scribble.mode === 'tsp'
+        ? scribble.mapPixels * scribble.inkedFraction * DEFAULT_RELAXATION_PASSES * TSP_US_PER_INKED_PIXEL_PER_PASS
+        : scribble.strokeCount * (GREEDY_US_PER_STROKE
+            + GREEDY_PAY_US_PER_STROKE_AT_1MM_PER_PIXEL / Math.max(0.01, scribble.mmPerPixel * scribble.mmPerPixel));
+
+    const stitchUs = scribble.rawChainCount * scribble.rawChainCount * STITCH_US_PER_CHAIN_PAIR;
+
+    return demandSeconds + (algorithmUs + stitchUs) / 1e6;
+}
+
+// What the optimizer costs on scribble chains, per pair, for each of its two
+// passes (optimizer.ts's greedy nearest-neighbour and its bounded 2-opt - the
+// same code the traced path pays GREEDY_NN_US_PER_SHAPE_PAIR and
+// TWO_OPT_US_PER_SEGMENT_PAIR for). It comes out ~2.5x higher here, which is
+// not a contradiction: a scribble chain is one path of thousands of points
+// where a hatch line is a path of two, and the comparison is per path either
+// way. MEASURED by fitting the full downstream render across all 24 runs
+// against points and chains^2 together.
+export const SCRIBBLE_OPTIMIZE_US_PER_CHAIN_PAIR = 0.66;
+
+// Render + RDP simplify + dedupe + measure, per POINT rather than per path -
+// the distinction the traced path's own coefficient documents as a known
+// limitation and a scribble makes unavoidable, carrying 3,000-28,000 points
+// across a few hundred paths. MEASURED 6.5us/point from the same joint fit.
+// This is the term that grows fastest with plot size, and on the largest runs
+// measured it is most of the whole estimate.
+export const SCRIBBLE_RENDER_US_PER_POINT = 5.3;
+
 export function estimateProcessingSeconds(inputs: ProcessingEstimateInputs): ProcessingEstimate {
     // Defensive: every numeric input feeds a multiplication chain, so a single
     // missing or non-finite one propagates NaN all the way to totalSeconds -
@@ -445,6 +555,13 @@ export function estimateProcessingSeconds(inputs: ProcessingEstimateInputs): Pro
 
     const pixels = Math.max(0, inputs.sourceWidthPx) * Math.max(0, inputs.sourceHeightPx);
     const levels = Math.max(1, inputs.grayscaleLevels ?? 1, inputs.colorCount);
+
+    // A mark-making render takes a different road through the pipeline
+    // entirely, so it gets costed before any of the trace-derived projections
+    // below - none of which describe anything it does.
+    if (inputs.scribble) {
+        return estimateScribbleProcessing(inputs.scribble, pixels, deviceFactor, deviceCalibration);
+    }
 
     const shapeCount = estimateShapeCount(inputs, pixels);
     // Prefer the real requested physical size (see ProcessingEstimateInputs'
@@ -476,6 +593,7 @@ export function estimateProcessingSeconds(inputs: ProcessingEstimateInputs): Pro
         infillSeconds: deviceFactor * estimateInfillSeconds(inputs, segments),
         optimizeSeconds: estimateOptimizeSeconds(deviceFactor, shapeCount, segments.totalDrawSegments),
         renderSimplifyDedupeSeconds: deviceFactor * estimateRenderSimplifyDedupeSeconds(segments.totalDrawSegments),
+        scribbleSeconds: 0,
     };
 
     const totalSeconds = Object.values(breakdown).reduce((sum, v) => sum + v, 0);
@@ -486,6 +604,49 @@ export function estimateProcessingSeconds(inputs: ProcessingEstimateInputs): Pro
         deviceCalibration,
         estimatedShapeCount: shapeCount,
         estimatedTotalDrawSegments: segments.totalDrawSegments,
+    };
+}
+
+// The scribble path's own assembly of the breakdown.
+//
+// Everything a traced render spends its time on is absent: nothing is traced,
+// so there is no vectorize cost beyond reading the pixels into the demand map
+// (which this counts as the scribble's own); nothing overlaps, so there is no
+// knockout; and the chains carry `density: 0`, so generateInfills draws their
+// outlines and generates nothing (infill.ts). What is left is the optimizer
+// and the render, both of which run exactly as they always do - on a few
+// hundred paths of tens of thousands of points.
+function estimateScribbleProcessing(
+    scribble: ScribbleProjection,
+    pixels: number,
+    deviceFactor: number,
+    deviceCalibration: DeviceCalibration,
+): ProcessingEstimate {
+    const chainPairs = scribble.chainCount * scribble.chainCount;
+    const greedyNnSeconds = deviceFactor * (chainPairs * SCRIBBLE_OPTIMIZE_US_PER_CHAIN_PAIR) / 1e6;
+    // The 2-opt pass's real wall-clock budget applies here exactly as it does
+    // to a traced render - a slow device completes fewer passes inside the
+    // same two real seconds rather than taking longer (see
+    // TWO_OPT_TIME_BUDGET_SECONDS).
+    const twoOptSeconds = Math.min(greedyNnSeconds, TWO_OPT_TIME_BUDGET_SECONDS);
+
+    const breakdown: ProcessingEstimateBreakdown = {
+        vectorizeSeconds: 0,
+        flattenKnockoutSeconds: 0,
+        infillSeconds: 0,
+        optimizeSeconds: greedyNnSeconds + twoOptSeconds,
+        renderSimplifyDedupeSeconds: deviceFactor * (scribble.pointCount * SCRIBBLE_RENDER_US_PER_POINT) / 1e6,
+        scribbleSeconds: deviceFactor * estimateScribbleSeconds(scribble, pixels),
+    };
+
+    return {
+        totalSeconds: Object.values(breakdown).reduce((sum, v) => sum + v, 0),
+        breakdown,
+        deviceCalibration,
+        // A chain is what the renderer sees as a shape, and each one is drawn
+        // in a single pen-down bracket - so both counts are the chain count.
+        estimatedShapeCount: scribble.chainCount,
+        estimatedTotalDrawSegments: scribble.chainCount,
     };
 }
 

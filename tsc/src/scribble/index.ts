@@ -9,14 +9,9 @@ import { greedyScribble, Point } from './greedy';
 import { measureChains, stitch } from './stitch';
 import { scribbleToSvg } from './toSvg';
 import { tspScribble } from './tsp';
+import { MARK_MODES, MarkMode, isMarkMode } from './markModes';
 
-export type MarkMode = 'greedy' | 'tsp';
-
-export const MARK_MODES: MarkMode[] = ['greedy', 'tsp'];
-
-export function isMarkMode(value: unknown): value is MarkMode {
-    return typeof value === 'string' && (MARK_MODES as string[]).includes(value);
-}
+export { MarkMode, MARK_MODES, isMarkMode };
 
 export type ScribbleOptions = {
     mode: MarkMode;
