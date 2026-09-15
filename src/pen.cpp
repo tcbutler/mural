@@ -179,6 +179,12 @@ bool Pen::slowUnlock() {
     return true;
 }
 
+bool Pen::slowLock() {
+    doSlowMove(this, currentPosition, highestLocked, slowSpeedDegPerSec);
+    currentPosition = highestLocked;
+    return true;
+}
+
 bool Pen::slowDown() {
     if (penDistance == -1) {
         return false;

@@ -165,6 +165,9 @@ function stateDocument() {
     return {
         ...state,
         hasCommands: commandsFile !== null,
+        // Pen::isReleased - false when no distinct release angle is calibrated,
+        // whatever the servo is doing.
+        penReleased: penLimits.unlocked > penLimits.highestLocked && penAngle >= penLimits.unlocked,
         penLowestLocked: penLimits.lowestLocked,
         penHighestLocked: penLimits.highestLocked,
         penUnlocked: penLimits.unlocked,
@@ -540,6 +543,15 @@ const server = http.createServer(async (req, res) => {
     if (p === '/unlockPen') {
         if (penBusy()) { res.writeHead(409, {'Content-Type':'text/plain'}); return res.end("Busy - can't move the pen while drawing"); }
         penAngle = penLimits.unlocked;
+        return ok(res);
+    }
+
+    // The other half of /unlockPen: closes the holder again after a swap. Unlike
+    // Pen::slowUp it does not require a calibrated contact point, so a pen can be
+    // changed on a machine that has never been through pen calibration.
+    if (p === '/lockPen') {
+        if (penBusy()) { res.writeHead(409, {'Content-Type':'text/plain'}); return res.end("Busy - can't move the pen while drawing"); }
+        penAngle = penLimits.highestLocked;
         return ok(res);
     }
 

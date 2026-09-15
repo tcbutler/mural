@@ -599,6 +599,20 @@
         <button type="button" class="btn-close" data-modal-dismiss aria-label="Close"></button>
       </div>
       <div class="modal-body">
+        <!-- Changing a pen is not a setup-only act: it happens mid-session, when
+             a nib dries out or a colour is wrong. The cog is on every screen, so
+             this is the one place the control can live and always be there. The
+             machine has to be standing still - the firmware refuses while it is
+             moving or drawing (penCalibrationAllowed in main.cpp), and this
+             mirrors that rather than letting the button fail. -->
+        <div id="changePenSection">
+          <h6 class="mb-2">Change pen</h6>
+          <h6><small class="text-muted" id="changePenHint">Releases the holder so the pen can be taken out, then closes it again on the new one.</small></h6>
+          <button type="button" class="w-100 btn btn-lg btn-primary mb-2" id="changePenBtn">Release pen</button>
+          <div id="changePenBusy" class="mb-2" style="display:none;"><small class="text-muted">Available when the machine is standing still.</small></div>
+          <hr class="my-4">
+        </div>
+
         <!-- Pen ink capacity (task 4): moved out of the main preview flow
              into the tools/cog modal - config most users never touch. The
              resulting figure still surfaces in the preview flow itself, see

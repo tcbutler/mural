@@ -41,6 +41,12 @@ function applyPenLimitsToSliders(state) {
     };
     $("#servoRange, #penSwapServoRange, #resumePenRange")
         .attr({ min: penLimits.lowestLocked, max: penLimits.highestLocked });
+
+    if (typeof state.penReleased === 'boolean') {
+        penIsReleased = state.penReleased;
+    }
+    updateChangePenAvailability(state);
+    renderChangePenButton();
 }
 
 let currentWorker = null;
@@ -592,6 +598,56 @@ function positionOriginalOverlay() {
     ghost.style.width = preview.offsetWidth + 'px';
     ghost.style.height = preview.offsetHeight + 'px';
 }
+
+
+// --- Changing a pen, from anywhere ------------------------------------------
+//
+// A pen swap is not a setup-only act - a nib dries out, or the colour is wrong -
+// but the only release control lived on the calibration screen, two thirds of
+// the way through the wizard. This one lives in the tools modal, whose cog is on
+// every screen.
+//
+// The button is a toggle rather than a pair, because the holder is only ever in
+// one of two states and the useful question is always "what do I press now".
+// State comes from the machine - the state document reports whether the holder
+// is open (Pen::isReleased) - rather than from a variable here, so a reload, or
+// a release performed from the calibration screen, does not leave the button
+// and the holder disagreeing.
+//
+// Deliberately not /getPenLimits: its `current` is the calibrated contact angle
+// (Pen::getPenDistance), not where the servo is now, so comparing it against the
+// release angle answers a different question entirely.
+let penIsReleased = false;
+
+function renderChangePenButton() {
+    // With no distinct release angle calibrated, releasing would move the holder
+    // to where it already sits. Say so rather than offering a button that does
+    // nothing.
+    const canRelease = penLimits.unlocked > penLimits.highestLocked;
+    $("#changePenSection").toggle(canRelease);
+    if (!canRelease) {
+        return;
+    }
+
+    $("#changePenBtn")
+        .text(penIsReleased ? "Pen fitted - lock the holder" : "Release pen")
+        .toggleClass('btn-primary', !penIsReleased)
+        .toggleClass('btn-success', penIsReleased);
+    $("#changePenHint").text(penIsReleased
+        ? "The holder is open. Put the pen in, then lock it."
+        : "Releases the holder so the pen can be taken out, then closes it again on the new one.");
+}
+
+// The firmware refuses a pen move while the machine is moving or drawing
+// (penCalibrationAllowed). Mirror that here so the button is visibly unavailable
+// rather than failing when pressed.
+function updateChangePenAvailability(state) {
+    const busy = !!state && (state.moving === true || state.phase === 'Drawing');
+    $("#changePenBtn").prop('disabled', busy);
+    $("#changePenBusy").toggle(busy);
+}
+
+
 
 function init() {
     function doneWithPhase(custom) {
@@ -1749,6 +1805,53 @@ function init() {
         // renderPlottingEstimate's ink line and the per-layer breakdown.
         renderInkCapacityTable();
         loadPenCalLimits();
+        // Ask the machine directly rather than relying on the last state
+        // document: while a plot is running the screen is driven by SSE progress
+        // events and no state document arrives, so the availability of this
+        // button would otherwise be however it was left before the plot started.
+        // The modal opening is the moment the answer matters.
+        $.get("/getState", function(fresh) {
+            if (fresh && typeof fresh.penReleased === 'boolean') {
+                penIsReleased = fresh.penReleased;
+            }
+            if (fresh && typeof fresh.penUnlocked === 'number') {
+                penLimits.unlocked = fresh.penUnlocked;
+                penLimits.highestLocked = fresh.penHighestLocked;
+            }
+            updateChangePenAvailability(fresh);
+            renderChangePenButton();
+        }).fail(renderChangePenButton);
+    });
+
+    $("#changePenBtn").click(function() {
+        const button = $(this);
+        const releasing = !penIsReleased;
+        button.prop('disabled', true);
+        $.post(releasing ? "/unlockPen" : "/lockPen", {})
+            .done(function() {
+                penIsReleased = releasing;
+                renderChangePenButton();
+                // Refresh just the pen-related bits from the machine. NOT
+                // adaptToState: that drives the wizard's slides, and would move
+                // the screen underneath an open modal.
+                $.get("/getState", function(fresh) {
+                    if (fresh && typeof fresh.penReleased === 'boolean') {
+                        penIsReleased = fresh.penReleased;
+                    }
+                    updateChangePenAvailability(fresh);
+                    renderChangePenButton();
+                });
+            })
+            .fail(function(jqXHR) {
+                // 409 is the firmware refusing because the machine is moving or
+                // drawing - worth saying, rather than leaving a button that
+                // appeared to do nothing.
+                const detail = (jqXHR && (jqXHR.responseText || jqXHR.statusText)) || 'no response';
+                showError("Could not move the pen holder: " + detail, null);
+            })
+            .always(function() {
+                button.prop('disabled', false);
+            });
     });
 
     toolsModal.addEventListener('hidden.bs.modal', function (event) {
