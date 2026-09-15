@@ -848,6 +848,7 @@ function init() {
             $("#turdSize").val(0.5);
             $("#whitePoint").val(1);
             $("#warmth").val(0);
+            $("#markMode").val("trace").removeData('seed');
             updateToneReadouts();
             $("#fillMethod").val("crossHatch45");
             setColorMode('single');
@@ -1006,6 +1007,12 @@ function init() {
         const vectorizeRequest = {
             type: 'vectorize',
             raster,
+            // Whole-image mark making replaces the trace: when it is set the
+            // worker ignores grayscaleLevels, colorCount and the fill style,
+            // because there are no regions for them to act on.
+            markMode: getMarkMode(),
+            markSeed: getMarkSeed(),
+            nibWidthMmForMarks: getNibWidthMm(),
             despeckleMm: getDespeckleMm(),
             // What makes the millimetres convertible: the tracer sees pixels,
             // and only the plot size says how big a pixel is.
@@ -1243,7 +1250,7 @@ function init() {
 
     const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox', 'whitePoint', 'warmth'];
 
-    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth";
+    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth,#markMode";
 
     $(SETTINGS_CONTROL_SELECTOR).on('input change', function() {
         // A control the smart defaults may have pre-set was just changed by
@@ -1299,6 +1306,32 @@ function init() {
 
     $("#whitePoint,#warmth,#turdSize").on('input change', updateToneReadouts);
 
+    // A scribble reads the picture and draws it, so everything that configures
+    // a trace has nothing to act on while one is selected.
+    function applyMarkModeVisibility() {
+        const scribbling = !!getMarkMode();
+        $("#markOptions").toggle(scribbling);
+        $("label[for='fillMethod'],#fillMethod,#fillMethodRationale").toggle(!scribbling);
+        $("label[for='infillDensity'],#infillDensity,#infillDensityRationale").toggle(!scribbling);
+        $("label[for='turdSize'],#turdSize,#turdSizeRationale").toggle(!scribbling);
+        $("#colorModeLabel,#colorModeGroup").toggle(!scribbling);
+        if (scribbling) {
+            $("#grayscaleOptions,#multiColorOptions").hide();
+        } else {
+            setColorMode(getColorMode());
+        }
+    }
+
+    $("#markMode").on('change', applyMarkModeVisibility);
+
+    $("#markShuffle").on('click', function() {
+        // A different seed is a different, equally valid drawing - and it is a
+        // settings change like any other, so the preview goes out of date and
+        // waits to be asked rather than re-rendering on its own.
+        $("#markMode").data('seed', Math.floor(Math.random() * 0x7FFFFFFF));
+        $("#markMode").trigger('change');
+    });
+
     $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
     // The drawing's box changes with the window and when the preview is
     // enlarged or closed; the overlay has to follow it.
@@ -1332,8 +1365,10 @@ function init() {
     $("#pathTracing").click(async function() {
         $("label[for='turdSize'],#turdSize").hide();
         // A vector SVG has no photographed paper to lift and no colour the
-        // tracer is about to throw away, so neither tone control applies.
+        // tracer is about to throw away, so neither tone control applies - and
+        // the scribble modes read a raster, which this path does not have.
         $("#toneControls").hide();
+        $("label[for='markMode'],#markMode,#markModeRationale,#markOptions").hide();
         $("#colorModeGrayscaleOption").hide();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").show();
 
@@ -1356,6 +1391,7 @@ function init() {
         $("#grayscaleLevels").val(3);
         $("label[for='turdSize'],#turdSize").show();
         $("#toneControls").show();
+        $("label[for='markMode'],#markMode").show();
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2378,6 +2414,23 @@ function getInfillDensity() {
     } else {
         throw new Error('Invalid density');
     }
+}
+
+// Whole-image mark making (tsc/src/scribble/). 'trace' is the original
+// pipeline - the image is traced into regions and filled - and reads as
+// undefined to the worker, so an untouched control leaves every existing mode
+// byte-identical.
+function getMarkMode() {
+    const value = $("#markMode").val();
+    return value && value !== 'trace' ? value : undefined;
+}
+
+// The seed these algorithms are drawn with. Held on the control itself rather
+// than in a variable so it survives the same way every other setting does, and
+// so "draw it again" is a settings change like any other.
+function getMarkSeed() {
+    const value = parseInt($("#markMode").data('seed'), 10);
+    return Number.isFinite(value) ? value : undefined;
 }
 
 // Despeckle, in millimetres across on the paper (tsc/src/despeckle.ts turns

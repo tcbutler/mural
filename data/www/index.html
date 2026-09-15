@@ -304,6 +304,35 @@
             </div>
             <div id="plottingEstimateSummary" class="mb-2 text-start" style="display:none;"></div>
 
+            <!-- Whole-image mark making (tsc/src/scribble/). Not a fill
+                 style: these read the picture and draw it, where every fill
+                 works inside a region something else traced. So they replace
+                 the trace, and the controls that configure one - fill style,
+                 infill density, despeckle, colour mode - have nothing to act
+                 on and are hidden while a scribble is selected. -->
+            <label for="markMode" class="form-label mb-0">Mark making
+              <details class="info" name="muralInfo"><summary>i</summary>
+                <div class="info-panel">
+                  <b>Trace and fill</b> &mdash; the image is traced into regions and each one is filled with the fill style below. Best for flat artwork and anything with clean edges.<br>
+                  <b>Scribble</b> &mdash; a pen wanders the picture laying strokes wherever it still owes ink, the way you would shade by hand. The most legible of the three on a photograph, and the most ink.<br>
+                  <b>Single line</b> &mdash; the image becomes a field of dots and one continuous line visits every one of them. About a third of the ink and almost no pen lifts; it cannot go truly black, because the line never crosses itself.
+                </div>
+              </details>
+            </label>
+            <select class="form-select mb-1" id="markMode">
+              <option value="trace">Trace and fill &mdash; regions filled with a hatch or scribble style</option>
+              <option value="greedy">Scribble &mdash; one pen wandering where the picture is dark; most legible, most ink</option>
+              <option value="tsp">Single line &mdash; one unbroken line through the whole picture; a third of the ink</option>
+            </select>
+            <div id="markModeRationale" class="mb-2 text-start" style="display:none;"><small class="text-muted"></small></div>
+
+            <!-- These algorithms are random by construction: the seed is what
+                 makes a preview predict the plot, and asking for another seed
+                 is asking for a different, equally valid drawing. -->
+            <div id="markOptions" style="display:none;">
+              <button type="button" class="btn btn-outline-secondary btn-sm mb-2" id="markShuffle">Draw it again, differently</button>
+            </div>
+
             <!-- Tone preparation (tsc/src/tonePreparation.ts). Everything
                  below this pair decides HOW to draw the image; these two
                  decide what the image even is, which is why they sit first.
