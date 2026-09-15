@@ -169,7 +169,7 @@ Two features are compiled out unless you ask for them, because neither has run o
 
 Build them with `pio run -e esp32dev-tmcuart` or `-e esp32dev-smooth`. The default `esp32dev` build behaves exactly as the original hardware expects.
 
-> **Reflashing repartitions the device.** The app partition grew (1600K app / 2400K filesystem) to fit the larger firmware. The first flash with the new table wipes stored files and saved settings, so you'll re-run setup once.
+> **Reflashing repartitions the device.** The app partition grew (two 1600K app slots / an 832K filesystem — see `partitions.csv`) to fit the larger firmware. The first flash with the new table wipes stored files and saved settings, so you'll re-run setup once.
 
 ---
 
