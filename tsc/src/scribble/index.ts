@@ -31,9 +31,9 @@ export type ScribbleOptions = {
     /**
      * Gap the stitcher may bridge rather than lift over, in mm.
      *
-     * The single biggest lever on plot time for the greedy walk: on a 400mm
-     * horse it takes 1,149 pen lifts down to 116, about seventy minutes, for
-     * under three metres of extra ink.
+     * The single biggest lever on plot time for the greedy walk: on the 400mm
+     * horse in docs/mark-making.md it takes 1,167 pen lifts down to 119, 35
+     * minutes off the plot, for 2.8m of extra ink.
      */
     joinGapMm?: number;
 };

@@ -1,7 +1,7 @@
 # Mark-making
 
-How Mural 2.0 puts ink on paper: eight fill styles, tonal shading from one pen,
-and multi-colour separation with pen swaps.
+How Mural 2.0 puts ink on paper: eight fill styles, two whole-image mark-making
+modes, tonal shading from one pen, and multi-colour separation with pen swaps.
 
 Every picture here is drawn from the real command file the machine would
 execute, by `tools/make_style_examples.js`, so the strokes are the strokes the
@@ -11,6 +11,7 @@ pen makes. Regenerate them with:
 node tools/make_style_examples.js                      # every style, test image
 node tools/make_style_examples.js --mode grayscale --levels 4 --image path/to.jpg
 node tools/make_style_examples.js --mode color --colors 6 --hue-grouping --image path/to.png
+node tools/make_style_examples.js --mode marks --image path/to.jpg
 ```
 
 The test image comes from `tools/make_style_source.py`, and is built to exercise
@@ -180,6 +181,76 @@ So: flat art with distinct hues separates cleanly. Art with large soft shadows o
 broad pale washes spends pens on tone, and hue grouping (above) is the better
 tool for it.
 
+---
+
+## Two that are not fills at all
+
+Every style above works inside a region something else traced. The two modes
+under **Mark making** read the picture and draw it. There is no trace, so
+there are no regions, and the controls that configure one — fill style, infill
+density, despeckle, colour mode — have nothing to act on and disappear while
+one is selected.
+
+Both are random by construction. The seed rides on the control, so a preview
+predicts the plot exactly, and **Draw it again, differently** asks for another
+seed: the same picture, drawn again, with every stroke somewhere else.
+
+**Scribble** holds a map of the ink the picture still owes. From wherever the
+pen is it throws out two dozen candidate strokes, scores each by the debt along
+it, draws the best one, subtracts the ink that stroke actually lays, and
+repeats. Dark areas stay attractive until they are paid off, so the density of
+the scribble tracks the tone without anything ever computing a tone. It is the
+family behind Vrellis string art and DrawingBotV3's sketch fills.
+
+**Single line** stipples the image — points scattered by darkness, then
+relaxed until they spread evenly within it (Secord's weighted Voronoi method) —
+and joins every point with one tour that never crosses itself (Bosch & Herman).
+Because it never crosses itself, no ink lands on ink: it needs about two and a
+half times less line than the scribble for the same coverage, and it cannot go
+truly black at all. Tone comes entirely from how closely the line packs.
+
+| | |
+|---|---|
+| <img src="../images/style-examples/marks-greedy-horse.png" width="330"><br><sub>**Scribble** · 119 strokes · 51.7 m · 1h 15m</sub> | <img src="../images/style-examples/marks-tsp-horse.png" width="330"><br><sub>**Single line** · 14 strokes · 16.8 m · 24m</sub> |
+
+The same horse at 400 mm, against the tonal hatches that are the real
+alternative for a picture like this:
+
+| Drawn by | Ink | Pen lifts | Plot time | Command file |
+|---|---|---|---|---|
+| Cross-hatch, 4 tonal levels | 28.7 m | 1,345 | 1h 32m | 77 KB |
+| Loop scribble, 4 tonal levels | 29.5 m | 1,329 | 1h 32m | 108 KB |
+| Scribble | 51.7 m | 119 | 1h 15m | 40 KB |
+| Single line | 16.8 m | 14 | 24m | 37 KB |
+
+The scribble draws nearly twice the ink of the four-level hatch and still
+finishes sooner. Pen lifts are why: 119 against 1,345, and every one of them is
+a stop, a servo, and the travel to wherever the next mark starts. The stitcher
+is what buys that — it orders the pieces nearest-first and bridges any gap
+under 8 mm rather than lifting over it. The walk itself left 1,167 separate
+pieces on this drawing; stitching them took it to 119, which is 35 minutes off
+the plot for 2.8 m of extra ink.
+
+### What they are not for
+
+Flat art. A picture that is solid ink and bare paper with nothing in between
+has no density for either mode to modulate, which is exactly what a hatch is
+for:
+
+<img src="../images/style-examples/marks-greedy.png" width="420" alt="The flat test image drawn by the scribble: solid blocks scribbled over, the wordmark barely legible">
+
+Measured on a solid black page, the scribble drew 3.9x the line a plain
+cross-hatch needs for the same coverage — 250 minutes against 48. The single
+line does it in 23 and simply fails to make it black. The preview says so, under
+the Mark making control, whenever the image it has been given looks like this.
+
+That advice is the one recommendation the app shows without applying. The sweep
+behind these modes — 23 images scored, and 80 blind pairwise human preferences
+across five sheets — ranked the whole-image algorithms against *each other*:
+the scribble took a top-two slot on every sheet, and the tour won on cost on 19
+of 23. It never compared either against this app's own gradient hatch. So the
+app says what the modes are for and leaves the choice alone.
+
 Regenerate any of these with:
 
 ```bash
@@ -187,6 +258,7 @@ node tools/make_style_examples.js                      # every style, test image
 node tools/make_style_examples.js --mode grayscale --levels 4 --image path/to.jpg
 node tools/make_style_examples.js --mode color --colors 5 --image path/to.png
 node tools/make_style_examples.js --mode color --colors 6 --hue-grouping --image path/to.png
+node tools/make_style_examples.js --mode marks --image path/to.jpg
 ```
 
 The density ladder now reaches 2.5mm spacing (was 7mm), which is what makes true mid-tones possible rather than only light tints.
