@@ -1,4 +1,5 @@
 import { renderCommandsToSvgJson } from "./toSvgJson";
+import { decodeToAbsoluteLines } from "./commandFile";
 import { vectorizeImageData } from './vectorizer';
 import { renderSvgJsonToCommands } from "./toCommands";
 import path from 'path';
@@ -61,7 +62,7 @@ async function main_vectorRasterVector() {
                 topDistance: Math.round(width / 0.6),
             };
             const result = await renderSvgJsonToCommands(request, updater);
-            const resultSvgJsonString = renderCommandsToSvgJson(result.commands, width, height, updater);
+            const resultSvgJsonString = renderCommandsToSvgJson(decodeToAbsoluteLines(result.commands), width, height, updater);
             const resultSvg = convertSvgJsonToSvg(resultSvgJsonString, width, height);
             const fullResultPath = path.join(outDirPath, dirEntry.name);
             fs.writeFileSync(fullResultPath, resultSvg);
@@ -162,7 +163,7 @@ async function main_pathTracer() {
             };
             const result = await renderSvgJsonToCommands(request, updater);
             fs.writeFileSync(path.join(outDirPath, `${dirEntry.name}.commands.txt`), result.commands.join('\n'));
-            const resultSvgJsonString = renderCommandsToSvgJson(result.commands, width, height, updater);
+            const resultSvgJsonString = renderCommandsToSvgJson(decodeToAbsoluteLines(result.commands), width, height, updater);
             const resultSvg = convertSvgJsonToSvg(resultSvgJsonString, width, height);
             const fullResultPath = path.join(outDirPath, dirEntry.name);
             fs.writeFileSync(fullResultPath, resultSvg);

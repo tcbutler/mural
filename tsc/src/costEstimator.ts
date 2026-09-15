@@ -32,6 +32,9 @@
 //       knockout: true,
 //       flattenPaths: true,
 //       grayscaleLevels: undefined,
+//       // Whole-image mark making instead of a trace. Set it and both
+//       // estimates describe that render - see scribble/projection.ts.
+//       markMode: 'greedy',
 //       // Physical size the job will actually be drawn at - used to turn
 //       // path/segment *counts* into real mm draw/travel distances for the
 //       // plotting-time projection. Defaults to a generic mural-sized
@@ -52,6 +55,7 @@
 //   result.deviceCalibration // DeviceCalibration - this device's measured speed factor
 //   result.processing        // ProcessingEstimate - seconds + per-stage breakdown
 //   result.plotting          // PlottingTimeEstimate - seconds + draw/travel/pen-lift breakdown
+//   result.scribble          // ScribbleProjection - what a mark mode will draw (only with markMode)
 //
 // Every option is independent: pass none to get pure recommendations run
 // through both estimators; override just `fillStrategy` to see how a
@@ -70,6 +74,9 @@ import {
 } from './plottingEstimator';
 import { projectSegmentCounts, spacingMmForDensity } from './segmentModel';
 import { needsPreparation, preparationFor, prepareTone } from './tonePreparation';
+import { MarkMode } from './scribble/markModes';
+import { projectScribble, ScribbleProjection } from './scribble/projection';
+import { DEFAULT_NIB_WIDTH_MM } from './huePalette';
 
 export {
     // Re-exported so a caller only needs one import for the common path,
@@ -113,6 +120,16 @@ export type CostEstimatorOptions = {
     // its own recommendation, like the settings above.
     whitePoint?: number;
     warmth?: number;
+    // Whole-image mark making (scribble/). Set it and the estimate describes
+    // that render instead: no trace, no fill strategy, no infill density, and
+    // a drawing whose cost is a stroke count rather than a shape count. The
+    // fillStrategy/infillDensity options above are simply not part of that
+    // render, and are ignored rather than quietly folded in.
+    markMode?: MarkMode;
+    // Nib width, mm - how much paper a stroke covers, and so how much line the
+    // picture needs. Only read on the mark-making path; the traced path takes
+    // its ink model from the hatch spacing instead.
+    penWidthMm?: number;
     // A cheap 0..1 image-complexity proxy for the processing estimate.
     // Defaults to (1 - flatFraction) from the computed characteristics -
     // the fraction of the image that ISN'T a large uniform region, a
@@ -137,6 +154,9 @@ export type CostEstimateAndRecommendation = {
     deviceCalibration: DeviceCalibration;
     processing: ProcessingEstimate;
     plotting: PlottingTimeEstimate;
+    // What the chosen mark-making mode is projected to draw, when one is
+    // chosen (scribble/projection.ts). Absent on a traced render.
+    scribble?: ScribbleProjection;
 };
 
 // Rough fraction of an outline shape's own bounding "diameter" that its
@@ -192,6 +212,26 @@ export function estimateAndRecommend(imageData: ImageData, options: CostEstimato
     const drawWidthMm = options.drawWidthMm ?? DEFAULT_DRAW_WIDTH_MM;
     const drawHeightMm = options.drawHeightMm ?? DEFAULT_DRAW_HEIGHT_MM;
 
+    // The mark-making projection, when a mode is chosen: both estimates are
+    // built on it, so it is computed once here, where the prepared image's
+    // statistics are already to hand.
+    const scribble = options.markMode
+        ? projectScribble({
+            mode: options.markMode,
+            sourceWidthPx: preparedCharacteristics.widthPx,
+            sourceHeightPx: preparedCharacteristics.heightPx,
+            drawWidthMm,
+            penWidthMm: options.penWidthMm ?? DEFAULT_NIB_WIDTH_MM,
+            // Read off the PREPARED image, like everything else the estimates
+            // are built on: a white point that turns a grey background into
+            // paper takes most of the ink demand with it, which is most of
+            // what a scribble's cost is.
+            meanDarkness: preparedCharacteristics.meanDarkness,
+            meanInkDemand: preparedCharacteristics.meanInkDemand,
+            whiteHeadroom: preparedCharacteristics.whiteHeadroom,
+        })
+        : undefined;
+
     const processing = estimateProcessingSeconds({
         sourceWidthPx: characteristics.widthPx,
         sourceHeightPx: characteristics.heightPx,
@@ -206,7 +246,23 @@ export function estimateAndRecommend(imageData: ImageData, options: CostEstimato
         deviceFactor: deviceCalibration.factor,
         drawWidthMm,
         drawHeightMm,
+        scribble,
     });
+
+    if (scribble) {
+        // One pen-down/pen-up bracket per chain, and no pen swaps: a scribble
+        // is one pen's worth of drawing by construction.
+        const plotting = estimatePlottingSeconds(
+            {
+                drawDistanceMm: scribble.drawnMm,
+                travelDistanceMm: scribble.travelMm,
+                penTransitionCount: scribble.chainCount * 2,
+                penSwapCount: 0,
+            },
+            { speeds: options.speeds },
+        );
+        return { characteristics, recommendations, deviceCalibration, processing, plotting, scribble };
+    }
 
     const drawAreaMm2 = Math.max(0, drawWidthMm) * Math.max(0, drawHeightMm);
     const avgShapeSpanMm = processing.estimatedShapeCount > 0

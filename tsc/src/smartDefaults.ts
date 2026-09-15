@@ -11,6 +11,7 @@ import { InfillDensity } from './types';
 import { FillStrategyName } from './fillStrategyNames';
 import { BACKGROUND_LUMINANCE_THRESHOLD } from './grayscale';
 import { ImageCharacteristics } from './imageCharacteristics';
+import { MarkMode } from './scribble/markModes';
 
 export type Recommendation<T> = {
     value: T;
@@ -26,8 +27,12 @@ export type SmartDefaults = {
     colorCount: Recommendation<number>;
     fillStrategy: Recommendation<FillStrategyName>;
     infillDensity: Recommendation<InfillDensity>;
-    turdSize: Recommendation<number>;
+    // Smallest mark worth drawing, across, in mm - see recommendDespeckleMm.
+    despeckleMm: Recommendation<number>;
     hueGrouping: Recommendation<boolean>;
+    // Which way to draw the picture at all - see recommendMarkMode for why
+    // this one is advice rather than a default the UI applies for you.
+    markMode: Recommendation<MarkMode | 'trace'>;
 };
 
 function recommend<T>(value: T, rationale: string): Recommendation<T> {
@@ -208,25 +213,43 @@ function recommendInfillDensity(characteristics: ImageCharacteristics): Recommen
     );
 }
 
-// --- turdSize (despeckle) ------------------------------------------------
+// --- despeckle ------------------------------------------------------------
 //
-// Potrace's turdSize (vectorizer.ts's vectorizeImageData) drops
-// traced regions below this pixel-area threshold - useful for suppressing
-// noise, harmful if it eats real fine detail. Flat art has clean, deliberate
-// edges (edgeFraction is a real signal, not noise), so a small threshold is
-// safe. Continuous-tone/photographic content - especially with visible
-// texture/edge activity - is much more likely to trace a lot of true noise
-// (JPEG artifacts, film grain, sensor noise) as tiny spurious regions, so a
-// higher threshold scaled by edgeFraction cleans that up.
-function recommendTurdSize(characteristics: ImageCharacteristics): Recommendation<number> {
+// The smallest mark worth drawing, measured across, in millimetres on the
+// paper (despeckle.ts converts it for the tracer). Flat art has clean,
+// deliberate edges, so a small threshold is safe and a large one would eat
+// real detail. A photograph traces a great deal of true noise - grain, sensor
+// speckle, JPEG artefacts - as tiny spurious regions, and each one costs a
+// pen-down, a pen-up and the travel to reach it.
+//
+// Measured on a four-level trace of the horse fixture at 400mm wide, the
+// ladder is worth knowing before reading the numbers below: 0.5mm leaves 853
+// outlines, 1.5mm leaves 365, 2mm leaves 202, 3mm leaves 92 - and the ink
+// barely moves across that whole range (29.4m to 26.4m), because what is being
+// dropped is specks. 1.5mm is the knee: half the pen lifts for three percent
+// of the ink.
+//
+// The same figures at a 1200px raster come out within a few percent of the
+// 2400px ones, which is the point of the unit. Set in pixels they differed by
+// a factor of sixteen.
+const FLAT_ART_DESPECKLE_MM = 0.5;
+const PHOTO_DESPECKLE_BASE_MM = 0.8;
+const PHOTO_DESPECKLE_PER_EDGE_MM = 3.5;
+const PHOTO_DESPECKLE_CEILING_MM = 2.5;
+
+function recommendDespeckleMm(characteristics: ImageCharacteristics): Recommendation<number> {
     if (characteristics.classification === 'flat') {
-        return recommend(2, 'Flat art has clean, deliberate edges, so a small despeckle threshold is enough to drop stray single-pixel noise without losing real detail.');
+        return recommend(FLAT_ART_DESPECKLE_MM, `Flat art has clean, deliberate edges, so dropping marks under ${FLAT_ART_DESPECKLE_MM}mm clears stray noise without losing anything that was drawn on purpose.`);
     }
 
-    const value = Math.round(2 + characteristics.edgeFraction * 10);
+    const value = Math.min(
+        PHOTO_DESPECKLE_CEILING_MM,
+        PHOTO_DESPECKLE_BASE_MM + characteristics.edgeFraction * PHOTO_DESPECKLE_PER_EDGE_MM,
+    );
+    const rounded = Math.round(value * 10) / 10;
     return recommend(
-        value,
-        'Continuous-tone/photographic sources often trace a lot of sensor/compression noise as tiny spurious regions, so a higher despeckle threshold cleans that up.',
+        rounded,
+        `Photographs trace their grain and compression noise as thousands of specks, and each one costs a pen-down and a pen-up for a dot. Dropping anything under ${rounded}mm across removes most of them and almost none of the ink.`,
     );
 }
 
@@ -246,6 +269,57 @@ function recommendHueGrouping(characteristics: ImageCharacteristics): Recommenda
     return recommend(true, 'Continuous-tone content often has many close shades of the same hue - grouping them onto shared pens keeps the physical pen count reasonable while preserving shading.');
 }
 
+// --- markMode -------------------------------------------------------------
+//
+// Whether this picture wants the trace-and-fill pipeline or one of the
+// whole-image mark-making modes (scribble/).
+//
+// Ported from the fitted rules in tools/scribble/defaults.py's suggest(),
+// which came out of a scored sweep over 23 test images plus 80 blind pairwise
+// human preferences across 5 sheets. What that work establishes, and what it
+// does not, decides the shape of this recommendation:
+//
+//   - It establishes that among the whole-image algorithms, the greedy walk
+//     wins on legibility (19 of 23 images, and a top-two slot on every blind
+//     sheet) and the TSP tour wins on cost (19 of 23), needing about 2.5x less
+//     line because a non-crossing tour never lays ink on ink.
+//   - It establishes that flat art with solid blacks is the wrong job for any
+//     of them: measured on a solid black page, the scribble drew 3.9x the line
+//     a plain hatch needs for the same coverage - 250 minutes against 48.
+//   - It does NOT establish that a scribble beats this app's own hatch on a
+//     photograph. The sweep compared the scribble algorithms against each
+//     other; gradientHatch was never in it.
+//
+// So this is the one recommendation the UI shows without applying: switching a
+// photograph to a scribble changes what the drawing IS and roughly triples the
+// plot time, and nothing measured says it is the better picture. Telling
+// someone what the modes are for is useful; choosing for them, on this
+// evidence, would not be.
+
+// A flat image with essentially no mid-tones - solid regions and bare paper,
+// which is what a hatch is for and what a density fill has nothing to
+// modulate.
+const FLAT_ENOUGH_MID_TONE_FRACTION = 0.05;
+// How much of a flat image has to be inked before the overdraw actually costs
+// something. Below this the solids are small and isolated, and either way of
+// drawing them is cheap.
+const SOLID_INK_SHARE = 0.15;
+
+function recommendMarkMode(characteristics: ImageCharacteristics): Recommendation<MarkMode | 'trace'> {
+    if (characteristics.classification === 'flat' && characteristics.midToneFraction < FLAT_ENOUGH_MID_TONE_FRACTION) {
+        if (characteristics.meanDarkness > SOLID_INK_SHARE) {
+            return recommend('trace', `About ${Math.round(characteristics.meanDarkness * 100)}% of this is solid ink with almost no mid-tones, so there is no density for a scribble to modulate - it would draw around four times the line a cross-hatch needs for the same coverage. Trace and fill it.`);
+        }
+        return recommend('trace', 'This is flat art with small isolated solids, which the hatch fills draw cleanly and cheaply. A scribble is available if you want the marks to read as hand-drawn rather than printed.');
+    }
+
+    if (characteristics.continuousToneScore >= GRADIENT_HATCH_RECOMMENDATION_THRESHOLD) {
+        return recommend('greedy', 'Continuous tone, which is what the mark-making modes are for. The scribble walk reads best of them - it took a top-two slot on every sheet a human ranked blind - at about three times the plot time of the single line. Both are under Mark making; the hatch fills are still a fine answer here.');
+    }
+
+    return recommend('trace', 'Only mildly continuous-tone, so the hatch fills have enough to work with. The mark-making modes are there if you want the look; they suit a photograph more than this.');
+}
+
 export function recommendDefaults(characteristics: ImageCharacteristics): SmartDefaults {
     return {
         whitePoint: recommendWhitePoint(characteristics),
@@ -253,7 +327,8 @@ export function recommendDefaults(characteristics: ImageCharacteristics): SmartD
         colorCount: recommendColorCount(characteristics),
         fillStrategy: recommendFillStrategy(characteristics),
         infillDensity: recommendInfillDensity(characteristics),
-        turdSize: recommendTurdSize(characteristics),
+        despeckleMm: recommendDespeckleMm(characteristics),
         hueGrouping: recommendHueGrouping(characteristics),
+        markMode: recommendMarkMode(characteristics),
     };
 }

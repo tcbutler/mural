@@ -529,6 +529,9 @@ input[type="range"].form-range::-moz-range-track {
   font-weight: 400;
   opacity: 0.7;
   white-space: nowrap;
+  /* A value, not a label: the control headings are uppercased, and "0.5MM"
+     reads as a typo. */
+  text-transform: none;
 }
 
 /* =====================================================================

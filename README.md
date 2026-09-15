@@ -96,6 +96,13 @@ jittered, spiral, contour, a gradient hatch that follows the image's own
 shading like an engraving, and a loop scribble that shades the way a biro
 does. → [docs/mark-making.md](docs/mark-making.md)
 
+**Two ways of drawing that are not fills at all** — a scribble that wanders the
+picture laying strokes wherever it still owes ink, and a single unbroken line
+through the whole image. Both read the picture rather than filling regions
+something else traced, and on a photograph the single line plots in a quarter
+of the time a tonal hatch takes.
+→ [docs/mark-making.md](docs/mark-making.md)
+
 **Photographs**, traced directly rather than via a vector detour.
 
 **Estimates before you commit** — plot time derived from the real command file
@@ -132,7 +139,7 @@ numbers.
 
 | | |
 |---|---|
-| [Mark-making](docs/mark-making.md) | Fill styles, tonal levels and pen swaps, with pictures |
+| [Mark-making](docs/mark-making.md) | Fill styles, the whole-image scribble modes, tonal levels and pen swaps, with pictures |
 | [Multi-colour](docs/multi-color.md) | How colour separation, layer ordering and pen swaps work |
 | [Motion smoothing](docs/motion-smoothing.md) | `MURAL_SMOOTH_MOTION`: merging near-collinear waypoints |
 | [Pen servo](docs/pen-servo.md) | Pen geometry and the three calibrated angles |
@@ -162,7 +169,7 @@ Two features are compiled out unless you ask for them, because neither has run o
 
 Build them with `pio run -e esp32dev-tmcuart` or `-e esp32dev-smooth`. The default `esp32dev` build behaves exactly as the original hardware expects.
 
-> **Reflashing repartitions the device.** The app partition grew (1600K app / 2400K filesystem) to fit the larger firmware. The first flash with the new table wipes stored files and saved settings, so you'll re-run setup once.
+> **Reflashing repartitions the device.** The app partition grew (two 1600K app slots / an 832K filesystem — see `partitions.csv`) to fit the larger firmware. The first flash with the new table wipes stored files and saved settings, so you'll re-run setup once.
 
 ---
 

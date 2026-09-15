@@ -17,6 +17,7 @@
  *   node tools/make_style_examples.js --mode grayscale --levels 4 --image images/foo.jpg
  *   node tools/make_style_examples.js --mode color --colors 5 --image images/foo.png
  *   node tools/make_style_examples.js --mode color --colors 6 --hue-grouping --image images/foo.png
+ *   node tools/make_style_examples.js --mode marks --image images/foo.jpg
  */
 
 const fs = require('fs');
@@ -52,6 +53,7 @@ const { renderSvgJsonToCommands } = requireBuilt('toCommands');
 const { applyHueGrouping } = requireBuilt('huePalette');
 const { FILL_STRATEGY_NAMES } = requireBuilt('fillStrategyNames');
 const { decodeCommandFile } = requireBuilt('commandFile');
+const { scribbleToSvgString, MARK_MODES } = requireBuilt('scribble/index');
 
 // Plot geometry for the examples. Arbitrary but fixed, so the styles are
 // comparable to each other and the stroke counts mean something.
@@ -64,6 +66,11 @@ const TOP_DISTANCE_MM = 1000;
 const RASTER_LONG_EDGE_PX = 2400;
 // Pixels per mm when drawing the finished command file out to a PNG.
 const OUTPUT_SCALE = 2.2;
+// Nib width the mark-making modes size their strokes against, and the seed
+// they are drawn with - fixed so the gallery is reproducible (these
+// algorithms are random by construction).
+const NIB_WIDTH_MM = 1.2;
+const MARK_SEED = 0x5C81B71E;
 
 function arg(name, fallback) {
     const hit = process.argv.find(a => a.startsWith(`--${name}=`));
@@ -182,6 +189,47 @@ async function main() {
     const levels = parseInt(arg('levels', '3'), 10);
     const colorCount = parseInt(arg('colors', '4'), 10);
 
+    // Whole-image mark making (tsc/src/scribble/) replaces the trace rather
+    // than configuring it, so it also replaces the loop over fill styles
+    // below: there are no regions for a style to fill. One picture per mode.
+    if (mode === 'marks') {
+        const modes = only ? [only] : MARK_MODES;
+        const rows = [];
+        for (const markMode of modes) {
+            const started = Date.now();
+            const svgString = scribbleToSvgString(raster, {
+                mode: markMode,
+                drawWidthMm: PLOT_WIDTH_MM,
+                penWidthMm: NIB_WIDTH_MM,
+                // Fixed, so regenerating the gallery redraws the same picture
+                // rather than a different valid one every time.
+                seed: MARK_SEED,
+            });
+            const request = {
+                type: 'renderSvg',
+                svgJson: toSvgJson(svgString),
+                width: PLOT_WIDTH_MM,
+                height: heightMm,
+                svgWidth: raster.width,
+                svgHeight: raster.height,
+                homeX: PLOT_WIDTH_MM / 2,
+                homeY: heightMm / 2,
+                infillDensity: INFILL_DENSITY,
+                flattenPaths: false,
+                topDistance: TOP_DISTANCE_MM,
+                placement: 'topLeft',
+            };
+            const result = await renderSvgJsonToCommands(request, () => {});
+            const { png, strokes, penDownDistanceMm } = commandsToPng(result.commands, PLOT_WIDTH_MM, heightMm);
+            fs.writeFileSync(path.join(OUT_DIR, `marks-${markMode}${suffix}.png`), png);
+
+            rows.push({ fillMethod: `marks-${markMode}`, strokes, metres: penDownDistanceMm / 1000 });
+            console.log(`  ${markMode.padEnd(22)} ${String(strokes).padStart(6)} strokes  ${(penDownDistanceMm / 1000).toFixed(1).padStart(6)}m of ink  (${((Date.now() - started) / 1000).toFixed(1)}s)`);
+        }
+        printTable(rows);
+        return;
+    }
+
     let tracedSvg;
     let palette;
     if (mode === 'grayscale') {
@@ -244,6 +292,10 @@ async function main() {
         console.log(`  ${fillMethod.padEnd(22)} ${String(strokes).padStart(6)} strokes  ${(penDownDistanceMm / 1000).toFixed(1).padStart(6)}m of ink  (${((Date.now() - started) / 1000).toFixed(1)}s)`);
     }
 
+    printTable(rows);
+}
+
+function printTable(rows) {
     console.log('\nMarkdown for the README:\n');
     console.log('| Style | Strokes | Ink |');
     console.log('|---|---|---|');

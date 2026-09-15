@@ -159,6 +159,15 @@ export namespace RequestTypes {
         // infill.ts's generateInfills, which already resolves an unknown
         // strategy name defensively - so this is purely additive.
         fillMethod?: string,
+        // Physical nib width (mm) of the pen that will draw this. Here it
+        // decides one thing: the smallest traced region worth lifting the pen
+        // for, since anything narrower than the nib lands as the same dot of
+        // ink either way (infill.ts's minOutlineSpanMm). Omitted uses the
+        // app's default nib, which is what this did before the field existed.
+        // Named the same as VectorizeRequest's nibWidthMm and read off the
+        // same control, but the two are separate requests and this one is not
+        // gated on hue grouping.
+        nibWidthMm?: number,
         // Multi-color (see docs/multi-color.md): 0-based colorIndex values
         // (matching PathDensityData.colorIndex/ColorGroup.colorIndex) to
         // drop from this render entirely - both the layer's geometry and
@@ -177,7 +186,34 @@ export namespace RequestTypes {
     export type VectorizeRequest = {
         type: 'vectorize',
         raster: ImageData,
+        // Despeckle, as Potrace wants it: the area in SOURCE PIXELS below
+        // which a traced region is dropped. Still accepted, and still what
+        // reaches the tracer, but `despeckleMm` below is the one to set - see
+        // despeckle.ts for why a pixel area is the wrong unit to ask a person
+        // for.
         turdSize: number,
+        // Despeckle in millimetres ACROSS, on the paper. Takes priority over
+        // turdSize when the physical size is also known (drawWidthMm, or the
+        // estimator's default plot width), because it means the same thing
+        // whatever the source image's resolution.
+        despeckleMm?: number,
+        // Physical width of the plot, in mm - what makes despeckleMm
+        // convertible. The renderer learns this from the request that follows;
+        // the vectorizer has to be told.
+        drawWidthMm?: number,
+        // Whole-image mark making (src/scribble/), as an alternative to
+        // tracing the image into regions at all. 'greedy' walks the picture
+        // laying strokes where it still owes ink; 'tsp' stipples it and joins
+        // every dot with one tour. Both read the raster and emit strokes, so
+        // they replace the trace rather than adding to it: grayscaleLevels,
+        // colorCount and the fill strategies have nothing to act on and are
+        // ignored. Omitted leaves every existing mode exactly as it was.
+        markMode?: string,
+        // Seed for the mark-making walk. These algorithms are random by
+        // construction, so the seed is what makes a preview predict the plot.
+        markSeed?: number,
+        // Nib width in mm, for the walk's ink accounting.
+        nibWidthMmForMarks?: number,
         // Tone preparation (tonePreparation.ts), applied to `raster` before
         // any quantization or tracing so every mode below sees the same
         // prepared image. Both omitted preserves existing behaviour exactly.

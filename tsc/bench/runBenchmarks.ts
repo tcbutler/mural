@@ -80,14 +80,36 @@ import {
     timeVectorizeSingle,
     tracePathsForRequest,
 } from './pipelineHarness';
+import { analyzeImageCharacteristics } from '../src/imageCharacteristics';
+import { DEFAULT_NIB_WIDTH_MM } from '../src/huePalette';
+import { mulberry32 } from '../src/fillStrategies/seededRandom';
+import { DEFAULT_INK_CEILING, inkDemand } from '../src/scribble/demand';
+import { greedyScribble } from '../src/scribble/greedy';
+import { tspScribble } from '../src/scribble/tsp';
+import { measureChains, stitch } from '../src/scribble/stitch';
+import { scribbleToSvg } from '../src/scribble/toSvg';
+import { MarkMode } from '../src/scribble';
 import { InfillDensity } from '../src/types';
 import { FillStrategyName } from '../src/fillStrategyNames';
 import { fillStrategies } from '../src/fillStrategies/registry';
 
 const IMAGES_DIR = process.env.MURAL_BENCH_IMAGES_DIR || path.join(require('os').homedir(), 'Downloads');
-const SVG_LOGO_PATH = path.join(IMAGES_DIR, 'SVG_Logo.svg');
-const BLUEY_PATH = path.join(IMAGES_DIR, 'Bluey_Hero.png');
-const HORSE_PATH = path.join(IMAGES_DIR, 'Brown-Horse-Clipart-GraphicsFairy.jpg');
+// Two of the three fixtures now live in the repository (images/test_images),
+// so a checkout can run most of this harness without anyone having to put
+// files in ~/Downloads first. An explicit MURAL_BENCH_IMAGES_DIR still wins,
+// and SVG_Logo.svg is still a fixture you have to supply.
+// Relative to dist-test/bench/, which is where this file actually runs from
+// (see the HOW TO RUN header) - not to bench/.
+const REPO_IMAGES_DIR = path.resolve(__dirname, '../../../images/test_images');
+function fixturePath(filename: string): string {
+    const configured = path.join(IMAGES_DIR, filename);
+    if (process.env.MURAL_BENCH_IMAGES_DIR || fs.existsSync(configured)) return configured;
+    const inRepo = path.join(REPO_IMAGES_DIR, filename);
+    return fs.existsSync(inRepo) ? inRepo : configured;
+}
+const SVG_LOGO_PATH = fixturePath('SVG_Logo.svg');
+const BLUEY_PATH = fixturePath('Bluey_Hero.png');
+const HORSE_PATH = fixturePath('Brown-Horse-Clipart-GraphicsFairy.jpg');
 
 const STRATEGY_NAMES = Object.keys(fillStrategies) as FillStrategyName[];
 
@@ -341,6 +363,128 @@ async function benchColorSeparationMatrix() {
 
 // --- 7. End-to-end validation: full renderSvgJsonToCommands, real inputs ----
 
+// A corner-to-corner luminance ramp, as a stand-in for continuous-tone
+// content: no flat regions, no hard edges, every pixel asking for some ink.
+function syntheticRamp(width: number, height: number): ImageData {
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const t = (x / (width - 1) + y / (height - 1)) / 2;
+            const value = Math.round(255 * t);
+            const p = (y * width + x) * 4;
+            data[p] = value;
+            data[p + 1] = value;
+            data[p + 2] = value;
+            data[p + 3] = 255;
+        }
+    }
+    return { data, width, height, colorSpace: 'srgb' } as ImageData;
+}
+
+// --- 8. Scribble modes: demand map + algorithm + stitch + downstream render --
+//
+// The whole-image mark-making modes (src/scribble/) replace the trace, the
+// flatten and the infill with an entirely different shape of work, so
+// processingEstimator.ts costs them with their own stage rather than by
+// pretending they are a hatch. What that stage needs from here:
+//
+//   - the demand map's own two costs, which scale differently: the box
+//     average reads every SOURCE pixel, the gamma solve raises every MAP
+//     pixel to a power 28 times over, and the solve only runs at all when the
+//     image is darker than the ink ceiling (demand.ts's solveInkGamma).
+//   - the greedy walk's per-stroke cost, which is NOT constant: scoring is a
+//     fixed 24x20 samples a stroke, but paying the ink in scales with how
+//     many map pixels a stroke covers, i.e. with 1/mmPerPixel^2.
+//   - the TSP tour's cost, dominated by Lloyd relaxation over every inked map
+//     pixel, once per pass.
+//   - the stitcher, which is O(chains^2).
+//   - what the renderer then does with the result, which is the part the
+//     pre-render estimate used to miss entirely: a scribble is a handful of
+//     paths carrying tens of thousands of POINTS, and the per-path
+//     coefficients the traced path is costed with are blind to that.
+async function benchScribble() {
+    await section('scribble modes (demand map + algorithm + stitch + render)');
+
+    const cases: { name: string; file?: string; maxDim?: number; synthetic?: () => ImageData }[] = [
+        { name: 'horse-400', file: HORSE_PATH, maxDim: 400 },
+        { name: 'horse-900', file: HORSE_PATH, maxDim: 900 },
+        { name: 'bluey-600', file: BLUEY_PATH, maxDim: 600 },
+        // Both fixtures above are flat-ish art whose darkness sits in a few
+        // concentrated regions. A scribble's cost is driven by how the
+        // darkness is SPREAD, not just by its mean, so the fit also needs a
+        // case where every pixel carries some: a smooth corner-to-corner ramp
+        // at the same mean darkness has its ink demand spread over the whole
+        // frame instead.
+        { name: 'ramp-600', synthetic: () => syntheticRamp(600, 600) },
+    ];
+
+    for (const { name, file, maxDim, synthetic } of cases) {
+        const raster = synthetic ? synthetic() : await loadRasterImageDataAsync(file!, maxDim);
+        const characteristics = analyzeImageCharacteristics(raster);
+
+        for (const drawWidthMm of [300, 600, 900]) {
+            const demand = timeMs(() => inkDemand(raster, { drawWidthMm }));
+            const map = demand.result;
+            const mapPixels = map.width * map.height;
+
+            let inked = 0;
+            for (let i = 0; i < map.demand.length; i++) {
+                if (map.demand[i] > 1e-3) inked++;
+            }
+
+            for (const mode of ['greedy', 'tsp'] as MarkMode[]) {
+                const random = mulberry32(0x5C81_B71E);
+                const algorithm = timeMs(() => (mode === 'tsp'
+                    ? tspScribble(map, { random })
+                    : greedyScribble(map, { penWidthMm: DEFAULT_NIB_WIDTH_MM, random })));
+                const raw = algorithm.result;
+                let points = 0;
+                for (const chain of raw) points += chain.length;
+
+                const stitched = timeMs(() => stitch(raw, mode === 'tsp' ? 0 : 8));
+                const measured = measureChains(stitched.result);
+
+                // What the renderer is then handed, timed through the real
+                // production entry point rather than a stand-in.
+                const svgString = scribbleToSvg(stitched.result, {
+                    rasterWidth: raster.width,
+                    rasterHeight: raster.height,
+                    drawWidthMm,
+                });
+                const svgJson = svgToJsonViaImport(svgString);
+                const request = buildRenderRequest(svgJson, raster.width, raster.height, drawWidthMm, {
+                    // density 0 is what the scribble SVG carries: outline
+                    // only, no infill generated (toSvg.ts's header).
+                    infillDensity: 0 as InfillDensity,
+                });
+                const rendered = await timeFullRender(request);
+
+                record('scribble', {
+                    case: `${name}-${mode}-${drawWidthMm}mm`,
+                    mode,
+                    drawWidthMm,
+                    sourcePixels: raster.width * raster.height,
+                    mapPixels,
+                    mmPerPixel: map.mmPerPixel,
+                    inkedFraction: inked / Math.max(1, mapPixels),
+                    meanDarkness: characteristics.meanDarkness,
+                    whiteHeadroom: characteristics.whiteHeadroom,
+                    gammaSolved: characteristics.meanDarkness > DEFAULT_INK_CEILING,
+                    demandMs: demand.ms,
+                    algorithmMs: algorithm.ms,
+                    stitchMs: stitched.ms,
+                    renderMs: rendered.ms,
+                    points,
+                    rawChains: raw.length,
+                    chains: stitched.result.length,
+                    drawnMm: measured.drawnMm,
+                    travelMm: measured.travelMm,
+                });
+            }
+        }
+    }
+}
+
 async function benchEndToEnd() {
     await section('end-to-end (full renderSvgJsonToCommands, real inputs)');
 
@@ -418,23 +562,45 @@ async function benchEndToEnd() {
     }
 }
 
+// Which sections each fixture is needed by, so running one section doesn't
+// demand files the others want.
+const SECTIONS: { name: string; run: () => Promise<void>; fixtures: string[] }[] = [
+    { name: 'vectorizeGrayscale', run: benchVectorizeGrayscale, fixtures: [HORSE_PATH] },
+    { name: 'vectorizeColor', run: benchVectorizeColor, fixtures: [BLUEY_PATH] },
+    { name: 'hueGrouping', run: benchHueGrouping, fixtures: [] },
+    { name: 'flatten', run: benchFlatten, fixtures: [SVG_LOGO_PATH] },
+    { name: 'knockout', run: benchKnockout, fixtures: [SVG_LOGO_PATH] },
+    { name: 'fillStrategies', run: benchFillStrategiesMatrix, fixtures: [SVG_LOGO_PATH, HORSE_PATH] },
+    { name: 'colorSeparation', run: benchColorSeparationMatrix, fixtures: [SVG_LOGO_PATH, BLUEY_PATH] },
+    { name: 'endToEnd', run: benchEndToEnd, fixtures: [SVG_LOGO_PATH, BLUEY_PATH, HORSE_PATH] },
+    { name: 'scribble', run: benchScribble, fixtures: [HORSE_PATH, BLUEY_PATH] },
+];
+
 async function main() {
     console.log(`Reading fixtures from ${IMAGES_DIR}`);
-    for (const p of [SVG_LOGO_PATH, BLUEY_PATH, HORSE_PATH]) {
-        if (!fs.existsSync(p)) {
-            console.error(`Missing fixture: ${p}. Set MURAL_BENCH_IMAGES_DIR to override.`);
+
+    // MURAL_BENCH_ONLY=scribble,endToEnd runs just those sections - the full
+    // matrix takes long enough that re-fitting one stage's coefficients
+    // shouldn't mean re-running all of it.
+    const only = (process.env.MURAL_BENCH_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
+    const selected = only.length > 0
+        ? SECTIONS.filter(s => only.includes(s.name))
+        : SECTIONS;
+    if (selected.length === 0) {
+        console.error(`No such section(s): ${only.join(', ')}. Known: ${SECTIONS.map(s => s.name).join(', ')}`);
+        process.exit(1);
+    }
+
+    for (const fixture of new Set(selected.flatMap(s => s.fixtures))) {
+        if (!fs.existsSync(fixture)) {
+            console.error(`Missing fixture: ${fixture}. Set MURAL_BENCH_IMAGES_DIR to override.`);
             process.exit(1);
         }
     }
 
-    await benchVectorizeGrayscale();
-    await benchVectorizeColor();
-    await benchHueGrouping();
-    await benchFlatten();
-    await benchKnockout();
-    await benchFillStrategiesMatrix();
-    await benchColorSeparationMatrix();
-    await benchEndToEnd();
+    for (const { run } of selected) {
+        await run();
+    }
 
     const outPath = process.env.MURAL_BENCH_OUT;
     if (outPath) {

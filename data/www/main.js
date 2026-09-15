@@ -845,12 +845,19 @@ function init() {
             showTargetSizeWarning(null);
             $(".svg-control").hide();
             $("#infillDensity").val(0);
-            $("#turdSize").val(2);
+            $("#turdSize").val(0.5);
             $("#whitePoint").val(1);
             $("#warmth").val(0);
+            $("#markMode").val("trace").removeData('seed');
             updateToneReadouts();
             $("#fillMethod").val("crossHatch45");
             setColorMode('single');
+            // .val() fires no change event, so the visibility rules have to be
+            // re-applied by hand: without this, resetting a scribble back to
+            // "trace" leaves fill style, infill density, despeckle and colour
+            // mode hidden, and re-picking the already-selected "trace" option
+            // fires nothing either - there is no way back to them.
+            applyMarkModeVisibility();
             $("#grayscaleLevels").val(3);
             $("#colorOverprintCheckbox").prop("checked", false);
             $("#hueGroupingCheckbox").prop("checked", false);
@@ -1006,7 +1013,16 @@ function init() {
         const vectorizeRequest = {
             type: 'vectorize',
             raster,
-            turdSize: getTurdSize(),
+            // Whole-image mark making replaces the trace: when it is set the
+            // worker ignores grayscaleLevels, colorCount and the fill style,
+            // because there are no regions for them to act on.
+            markMode: getMarkMode(),
+            markSeed: getMarkSeed(),
+            nibWidthMmForMarks: getNibWidthMm(),
+            despeckleMm: getDespeckleMm(),
+            // What makes the millimetres convertible: the tracer sees pixels,
+            // and only the plot size says how big a pixel is.
+            drawWidthMm: svgControl.getTargetWidth(),
             // Tone preparation, applied to the raster before any of the modes
             // below see it - see getWhitePoint/getWarmth. The worker drops
             // warmth itself on the colour path (tonePreparation.ts's
@@ -1151,6 +1167,11 @@ function init() {
             infillDensity: getInfillDensity(),
             flattenPaths: getFlattenPaths(),
             topDistance: currentState.topDistance,
+            // The pen in the holder. Sent on every render, not only when hue
+            // grouping wants it for the ink model: the renderer also uses it
+            // to decide the smallest mark worth lifting the pen for, and that
+            // question is asked of every drawing (tsc/src/infill.ts).
+            nibWidthMm: getNibWidthMm(),
             // Where the drawing lands in the drawable area (tsc/src/placement.ts).
             // The pipeline renders at the origin regardless; this translates the
             // finished command file, so the preview still shows the artwork
@@ -1240,7 +1261,7 @@ function init() {
 
     const SMART_DEFAULT_CONTROL_IDS = ['fillMethod', 'infillDensity', 'turdSize', 'colorCount', 'hueGroupingCheckbox', 'whitePoint', 'warmth'];
 
-    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth";
+    const SETTINGS_CONTROL_SELECTOR = "#infillDensity,#turdSize,#flattenPathsCheckbox,input[name='colorMode'],#grayscaleLevels,#colorCount,#colorOverprintCheckbox,#knockoutGapMm,#hueGroupingCheckbox,#nibWidthMm,#inkMultiplier,#fillMethod,#whitePoint,#warmth,#markMode";
 
     $(SETTINGS_CONTROL_SELECTOR).on('input change', function() {
         // A control the smart defaults may have pre-set was just changed by
@@ -1294,7 +1315,43 @@ function init() {
         $("#hueGroupingOptions").toggle($(this).is(":checked"));
     });
 
-    $("#whitePoint,#warmth").on('input change', updateToneReadouts);
+    $("#whitePoint,#warmth,#turdSize").on('input change', updateToneReadouts);
+
+    // A scribble reads the picture and draws it, so everything that configures
+    // a trace has nothing to act on while one is selected.
+    //
+    // This is the ONLY thing that restores those controls, so it has to be
+    // called wherever the mark mode or the slide changes underneath them -
+    // not just on the select's own change event, which a .val() reset does
+    // not fire.
+    function applyMarkModeVisibility() {
+        const scribbling = !!getMarkMode();
+        $("#markOptions").toggle(scribbling);
+        $("label[for='fillMethod'],#fillMethod").toggle(!scribbling);
+        $("label[for='infillDensity'],#infillDensity").toggle(!scribbling);
+        $("label[for='turdSize'],#turdSize").toggle(!scribbling);
+        // A rationale only exists once smart defaults have run for this
+        // image; showing an empty one leaves a blank gap under the control.
+        showRationaleIfAny('#fillMethodRationale', !scribbling);
+        showRationaleIfAny('#infillDensityRationale', !scribbling);
+        showRationaleIfAny('#turdSizeRationale', !scribbling);
+        $("#colorModeLabel,#colorModeGroup").toggle(!scribbling);
+        if (scribbling) {
+            $("#grayscaleOptions,#multiColorOptions").hide();
+        } else {
+            setColorMode(getColorMode());
+        }
+    }
+
+    $("#markMode").on('change', applyMarkModeVisibility);
+
+    $("#markShuffle").on('click', function() {
+        // A different seed is a different, equally valid drawing - and it is a
+        // settings change like any other, so the preview goes out of date and
+        // waits to be asked rather than re-rendering on its own.
+        $("#markMode").data('seed', Math.floor(Math.random() * 0x7FFFFFFF));
+        $("#markMode").trigger('change');
+    });
 
     $("#overlayOriginalToggle").on('change', applyOriginalOverlay);
     // The drawing's box changes with the window and when the preview is
@@ -1327,10 +1384,22 @@ function init() {
     });
 
     $("#pathTracing").click(async function() {
+        // A scribble left selected on the raster path would still be selected
+        // here, hidden, where it can mean nothing: this renderer has no raster
+        // for the algorithms to read. Hiding it is not enough - getMarkMode()
+        // would keep reporting it to the processing estimate, and the fill
+        // style, infill density and colour mode it had hidden would stay
+        // hidden in a renderer that uses all three. So reset it, and let the
+        // visibility rules put everything back.
+        $("#markMode").val("trace");
+        applyMarkModeVisibility();
+
         $("label[for='turdSize'],#turdSize").hide();
         // A vector SVG has no photographed paper to lift and no colour the
-        // tracer is about to throw away, so neither tone control applies.
+        // tracer is about to throw away, so neither tone control applies - and
+        // the scribble modes read a raster, which this path does not have.
         $("#toneControls").hide();
+        $("label[for='markMode'],#markMode,#markModeRationale,#markOptions").hide();
         $("#colorModeGrayscaleOption").hide();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").show();
 
@@ -1351,8 +1420,17 @@ function init() {
             setColorMode('single');
         }
         $("#grayscaleLevels").val(3);
-        $("label[for='turdSize'],#turdSize").show();
         $("#toneControls").show();
+        $("label[for='markMode'],#markMode").show();
+        // The advice only exists once smart defaults have run for this image,
+        // and going back to the renderer picker hid it - so restore it if
+        // there is one rather than leaving a blank gap or a stale panel.
+        showRationaleIfAny('#markModeRationale', true);
+        // Which of the trace's own controls come back depends on the mark mode
+        // that is still selected - coming back from the renderer picker must
+        // not resurrect the despeckle slider under a scribble (the worker
+        // ignores it there), nor leave the shuffle button hidden under one.
+        applyMarkModeVisibility();
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2377,8 +2455,30 @@ function getInfillDensity() {
     }
 }
 
-function getTurdSize() {
-    return parseInt($("#turdSize").val());
+// Whole-image mark making (tsc/src/scribble/). 'trace' is the original
+// pipeline - the image is traced into regions and filled - and reads as
+// undefined to the worker, so an untouched control leaves every existing mode
+// byte-identical.
+function getMarkMode() {
+    const value = $("#markMode").val();
+    return value && value !== 'trace' ? value : undefined;
+}
+
+// The seed these algorithms are drawn with. Held on the control itself rather
+// than in a variable so it survives the same way every other setting does, and
+// so "draw it again" is a settings change like any other.
+function getMarkSeed() {
+    const value = parseInt($("#markMode").data('seed'), 10);
+    return Number.isFinite(value) ? value : undefined;
+}
+
+// Despeckle, in millimetres across on the paper (tsc/src/despeckle.ts turns
+// it into the pixel area the tracer wants). The control keeps its old id so
+// the rest of the wiring - smart defaults, dirty-marking, the renderer-mode
+// show/hide - does not have to care that its units changed.
+function getDespeckleMm() {
+    const value = parseFloat($("#turdSize").val());
+    return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 // Tone preparation (tsc/src/tonePreparation.ts): what the pipeline draws
@@ -2403,6 +2503,9 @@ function getWarmth() {
 function updateToneReadouts() {
     const whitePoint = parseFloat($("#whitePoint").val());
     $("#whitePointValue").text(Number.isFinite(whitePoint) ? `${Math.round(whitePoint * 100)}%` : '');
+
+    const despeckle = parseFloat($("#turdSize").val());
+    $("#turdSizeValue").text(Number.isFinite(despeckle) ? `${despeckle}mm` : '');
 
     const warmth = parseFloat($("#warmth").val());
     $("#warmthValue").text(!Number.isFinite(warmth) || warmth <= 0 ? 'off' : `${Math.round(warmth * 100)}%`);
@@ -2540,6 +2643,15 @@ function showRationale(selector, text) {
     $(selector).show();
 }
 
+// Shows a rationale panel only when there is one to show. A panel whose
+// <small> is still empty (smart defaults have not run for this image yet, or
+// this control got no advice) is a blank gap with a margin under it, not a
+// hidden one - so "make this visible again" always has to mean "if it has
+// something in it".
+function showRationaleIfAny(selector, visible) {
+    $(selector).toggle(!!visible && !!$(selector).find('small').text());
+}
+
 // Pre-sets every smart-defaulted control to its recommendation (per-image,
 // see smartDefaults.ts) and shows each one's rationale alongside it. Sets
 // values directly (.val()/.prop(), no .trigger()) so this never fires the
@@ -2554,8 +2666,8 @@ function applySmartDefaults(recommendations) {
     $("#infillDensity").val(recommendations.infillDensity.value);
     showRationale('#infillDensityRationale', recommendations.infillDensity.rationale);
 
-    $("#turdSize").val(recommendations.turdSize.value);
-    showRationale('#turdSizeRationale', recommendations.turdSize.rationale);
+    $("#turdSize").val(recommendations.despeckleMm.value);
+    showRationale('#turdSizeRationale', recommendations.despeckleMm.rationale);
 
     $("#colorCount").val(clampColorCountOption(recommendations.colorCount.value));
     showRationale('#colorCountRationale', recommendations.colorCount.rationale);
@@ -2571,6 +2683,22 @@ function applySmartDefaults(recommendations) {
     $("#hueGroupingCheckbox").prop("checked", recommendations.hueGrouping.value);
     $("#hueGroupingOptions").toggle(recommendations.hueGrouping.value);
     showRationale('#hueGroupingRationale', recommendations.hueGrouping.rationale);
+
+    // The one recommendation that is shown and not applied - see
+    // recommendMarkMode in tsc/src/smartDefaults.ts for why. Switching a
+    // picture to a scribble changes what the drawing is and roughly triples
+    // the plot time, and the research behind these modes ranked them against
+    // each other rather than against this app's own hatch fills. So the
+    // advice goes on screen and the choice stays with whoever is standing in
+    // front of the plotter.
+    //
+    // Only where there is a control for it to advise: this runs from
+    // runPreRenderEstimateIfNeeded on BOTH renderers, and the path-tracing
+    // one has already hidden the Mark making control - the scribble modes
+    // read a raster it does not have - so showing the panel there would leave
+    // an orphaned paragraph pointing at a control that isn't on screen.
+    $("#markModeRationale").find('small').text(recommendations.markMode.rationale);
+    showRationaleIfAny('#markModeRationale', $("#markMode").is(":visible"));
 }
 
 // Processing-time warning thresholds (seconds), applied to
@@ -2597,10 +2725,16 @@ function renderProcessingEstimate(processing) {
     textContainer.show();
 
     if (seconds >= PROCESSING_SEVERE_WARNING_SECONDS) {
+        // What to do about it depends on which pipeline is running: a
+        // scribble has no infill density or fill style to turn down, and its
+        // cost is set by the size of the paper and how dark the picture is
+        // (tsc/src/scribble/projection.ts).
+        const remedy = getMarkMode()
+            ? `A smaller plot size, a brighter paper setting, or the other mark-making mode will speed it up`
+            : `A lower infill density, a cheaper fill style, or fewer colors will speed it up`;
         warningContainer.text(
             `This could take a while on this device (~${formatDuration(seconds)}) - the page may look ` +
-            `unresponsive while it works. A lower infill density, a cheaper fill style, or fewer colors ` +
-            `will speed it up, or you can just wait it out.`
+            `unresponsive while it works. ${remedy}, or you can just wait it out.`
         ).show();
     } else if (seconds >= PROCESSING_WARNING_SECONDS) {
         warningContainer.text(`Processing may take ~${formatDuration(seconds)} on this device.`).show();
@@ -2640,6 +2774,17 @@ async function runProcessingEstimate() {
             // will actually get.
             whitePoint: getWhitePoint() ?? 1,
             warmth: getWarmth() ?? 0,
+            // Mark making is a different pipeline, not a different setting, so
+            // the estimate has to know about it or it describes a trace and an
+            // infill that are not going to happen (tsc/src/scribble/
+            // projection.ts).
+            markMode: getMarkMode(),
+            penWidthMm: getNibWidthMm(),
+            // A scribble's cost is set by the size of the paper more than by
+            // anything else - the strokes are physical - so the estimate needs
+            // the real plot size rather than the estimator's generic fallback.
+            drawWidthMm: svgControl.getTargetWidth(),
+            drawHeightMm: svgControl.getTargetHeight(),
         };
         const result = await estimateInWorker(currentRaster, options);
         lastEstimate = result;

@@ -277,4 +277,64 @@ if (!paperAvailable) {
         assert.strictEqual((overridden.data as { fillMethod?: string }).fillMethod, "jitteredHatch");
         assert.strictEqual((plain.data as { fillMethod?: string }).fillMethod, "crossHatchAngled");
     });
+
+    // --- outlines too small to draw (infill.ts's MIN_OUTLINE_SPAN_MM) -----
+    //
+    // A photograph traced into tonal bands produces a great many specks, and
+    // each one used to be drawn as its own stroke: pen down, trace something
+    // smaller than the nib, pen up. Found on the machine rather than on a
+    // screen - a four-level greyscale plot of a horse was aborted at 74%
+    // because it was spending its time dotting.
+
+    function outlinesFor(size: number, nibWidthMm?: number): number {
+        paper.setup(new paper.Size(100, 100));
+        const speck = new paper.Path.Rectangle(new paper.Point(10, 10), new paper.Size(size, size));
+        speck.fillColor = new paper.Color("#000000");
+        const [infilled] = generateInfills([speck], 2, undefined, undefined, nibWidthMm);
+        return infilled.outlinePaths.length;
+    }
+
+    test("infill.ts: a shape smaller than the nib is not drawn at all", () => {
+        // 0.5mm across, where the pen is 1.2mm: tracing it and touching the
+        // pen down once leave the same mark, and tracing costs two pen
+        // transitions plus the travel to reach it.
+        assert.strictEqual(outlinesFor(0.5), 0);
+    });
+
+    test("infill.ts: a shape the pen can actually draw is still outlined", () => {
+        assert.strictEqual(outlinesFor(20), 1);
+    });
+
+    test("infill.ts: the cut is at the nib's own width, not lower", () => {
+        // Just under and just over, so the threshold cannot drift without
+        // this failing.
+        assert.strictEqual(outlinesFor(1.1), 0);
+        assert.strictEqual(outlinesFor(1.3), 1);
+    });
+
+    test("infill.ts: the cut follows the pen, so a fineliner still draws its dots", () => {
+        // The whole argument for dropping these is that the pen cannot draw
+        // them as anything but a blot. A 0.3mm fineliner draws a 0.5mm mark
+        // four times over, so with that pen in the holder there is nothing to
+        // drop - and with a 3mm marker there is a great deal more.
+        assert.strictEqual(outlinesFor(0.5, 0.3), 1);
+        assert.strictEqual(outlinesFor(2, 3), 0);
+        // Saying nothing about the pen behaves exactly as it always did.
+        assert.strictEqual(outlinesFor(0.5), 0);
+        assert.strictEqual(outlinesFor(2), 1);
+    });
+
+    test("infill.ts: specks inside a compound path go too, and the shape itself stays", () => {
+        // The real source: a traced tonal band is one compound path holding
+        // its islands and holes, and it is the children that are specks.
+        paper.setup(new paper.Size(100, 100));
+        const big = new paper.Path.Rectangle(new paper.Point(10, 10), new paper.Size(60, 60));
+        const speck = new paper.Path.Rectangle(new paper.Point(80, 80), new paper.Size(0.4, 0.4));
+        const band = new paper.CompoundPath({ children: [big, speck] });
+        band.fillColor = new paper.Color("#000000");
+
+        const [infilled] = generateInfills([band], 2);
+        assert.strictEqual(infilled.outlinePaths.length, 1, "the speck should be dropped and the band kept");
+        assert.ok(Math.max(infilled.outlinePaths[0].bounds.width, infilled.outlinePaths[0].bounds.height) > 10);
+    });
 }

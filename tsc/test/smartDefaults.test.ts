@@ -21,6 +21,9 @@ function makeCharacteristics(overrides: Partial<ImageCharacteristics>): ImageCha
         // actually about.
         whiteHeadroom: 0.4,
         meanDarkness: 0.15,
+        // What that darkness works out to as ink length - see
+        // imageCharacteristics.ts's meanInkDemand.
+        meanInkDemand: 0.3,
         paperLuminance: 1,
         chroma: 0.02,
         chromaticFraction: 0,
@@ -30,14 +33,32 @@ function makeCharacteristics(overrides: Partial<ImageCharacteristics>): ImageCha
     };
 }
 
-test("recommendDefaults: a flat/vector-ish image gets crossHatch45, no hue grouping, and a small turdSize", () => {
+test("recommendDefaults: a flat/vector-ish image gets crossHatch45, no hue grouping, and a small despeckle", () => {
     const flat = makeCharacteristics({});
     const defaults = recommendDefaults(flat);
 
     assert.equal(defaults.fillStrategy.value, "crossHatch45");
     assert.equal(defaults.hueGrouping.value, false);
-    assert.ok(defaults.turdSize.value <= 3);
+    // Millimetres across on the paper, not pixels of source area - deliberate
+    // edges are worth keeping, so the threshold stays under the nib.
+    assert.ok(defaults.despeckleMm.value <= 1);
     assert.ok(defaults.colorCount.value >= 2 && defaults.colorCount.value <= 6);
+});
+
+test("recommendDefaults: a photograph gets a despeckle big enough to matter, and a bounded one", () => {
+    // The old pixel-area recommendation came out sub-millimetre at any
+    // realistic photo resolution, which is why it never removed the specks it
+    // was there for.
+    const photo = makeCharacteristics({
+        colorConcentration: 0.2,
+        flatFraction: 0.1,
+        edgeFraction: 0.35,
+        classification: "continuous-tone",
+    });
+    const defaults = recommendDefaults(photo);
+
+    assert.ok(defaults.despeckleMm.value >= 1.2, `expected at least a nib width, got ${defaults.despeckleMm.value}mm`);
+    assert.ok(defaults.despeckleMm.value <= 2.5, `expected a ceiling, got ${defaults.despeckleMm.value}mm`);
 });
 
 test("recommendDefaults: a strongly continuous-tone image gets gradientHatch, hue grouping, and a denser infill", () => {
@@ -134,4 +155,26 @@ test("recommendInfillDensity: backs off a step on a dark continuous-tone image",
     assert.equal(light.infillDensity.value, 5);
     assert.equal(dark.infillDensity.value, 4, 'a dark image at the same setting costs far more ink');
     assert.match(dark.infillDensity.rationale, /dark image/);
+});
+
+test("recommendMarkMode: a solid flat image is told to trace, with the cost of not doing so", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "flat", midToneFraction: 0.01, meanDarkness: 0.35,
+    }));
+    assert.equal(d.markMode.value, "trace");
+    assert.match(d.markMode.rationale, /four times the line/);
+});
+
+test("recommendMarkMode: a photograph is pointed at the scribble walk", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "continuous-tone", continuousToneScore: 0.8, midToneFraction: 0.6,
+    }));
+    assert.equal(d.markMode.value, "greedy");
+});
+
+test("recommendMarkMode: a borderline image is left on the hatch fills", () => {
+    const d = recommendDefaults(makeCharacteristics({
+        classification: "continuous-tone", continuousToneScore: 0.3, midToneFraction: 0.2,
+    }));
+    assert.equal(d.markMode.value, "trace");
 });
