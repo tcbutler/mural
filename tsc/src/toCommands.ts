@@ -108,7 +108,7 @@ export async function renderSvgJsonToCommands(
     }
 
     updateStatusFn("Generating infill");
-    const pathsWithInfills = generateInfills(pathsToRender, request.infillDensity, request.fillMethod, gradientField);
+    const pathsWithInfills = generateInfills(pathsToRender, request.infillDensity, request.fillMethod, gradientField, request.nibWidthMm);
 
     updateStatusFn("Optimizing paths");
     const optimizedPaths = optimizePaths(pathsWithInfills, request.homeX, request.homeY);
@@ -243,7 +243,7 @@ async function renderMultiColor(
 
     for (let i = 0; i < colorGroups.length; i++) {
         updateStatusFn(`Generating infill: layer ${i + 1}/${colorGroups.length}`);
-        const infilled = generateInfills(layerPathArrays[i], request.infillDensity, request.fillMethod, gradientField);
+        const infilled = generateInfills(layerPathArrays[i], request.infillDensity, request.fillMethod, gradientField, request.nibWidthMm);
 
         updateStatusFn(`Optimizing paths: layer ${i + 1}/${colorGroups.length}`);
         const optimized = optimizePaths(infilled, request.homeX, request.homeY);

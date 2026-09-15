@@ -159,6 +159,15 @@ export namespace RequestTypes {
         // infill.ts's generateInfills, which already resolves an unknown
         // strategy name defensively - so this is purely additive.
         fillMethod?: string,
+        // Physical nib width (mm) of the pen that will draw this. Here it
+        // decides one thing: the smallest traced region worth lifting the pen
+        // for, since anything narrower than the nib lands as the same dot of
+        // ink either way (infill.ts's minOutlineSpanMm). Omitted uses the
+        // app's default nib, which is what this did before the field existed.
+        // Named the same as VectorizeRequest's nibWidthMm and read off the
+        // same control, but the two are separate requests and this one is not
+        // gated on hue grouping.
+        nibWidthMm?: number,
         // Multi-color (see docs/multi-color.md): 0-based colorIndex values
         // (matching PathDensityData.colorIndex/ColorGroup.colorIndex) to
         // drop from this render entirely - both the layer's geometry and

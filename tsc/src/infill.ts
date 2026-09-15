@@ -121,7 +121,16 @@ const infillDensityToSpacingMap = new Map<Exclude<InfillDensity, 0>, number>([
 // Omitted (the pre-existing call shape, used by every caller before this
 // parameter existed) falls back to defaultFillStrategyName exactly as
 // before, so this is purely additive.
-export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: InfillDensity, defaultFillMethod?: string, gradientFieldOverride?: SerializedGradientField): InfilledPath[] {
+export function generateInfills(
+    pathsToInfill: paper.PathItem[],
+    infillDensity: InfillDensity,
+    defaultFillMethod?: string,
+    gradientFieldOverride?: SerializedGradientField,
+    // The pen actually in the holder, mm - what decides the smallest mark
+    // worth lifting for (see minOutlineSpanMm). Omitted falls back to the
+    // app's default nib, which is what every caller got before it existed.
+    nibWidthMm?: number,
+): InfilledPath[] {
     const view = paper.project.view;
     const boundsPath = new paper.Path.Rectangle(view.bounds);
 
@@ -133,6 +142,7 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
         ? makeGradientFieldLookup(gradientFieldOverride)
         : buildGradientFieldLookup(paper.project);
     const ctx: FillContext = {view, boundsPath, cache: new Map(), gradientField};
+    const minSpanMm = minOutlineSpanMm(nibWidthMm);
 
     // White-as-knockout (see flattener.ts's applyWhiteKnockout): a pure
     // white fill with no stroke of its own is dropped entirely (matching
@@ -167,13 +177,13 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
 
         if (includeOutline) {
             if (path instanceof paper.Path) {
-                if (path.firstSegment && path.lastSegment && isWorthDrawing(path)) {
+                if (path.firstSegment && path.lastSegment && isWorthDrawing(path, minSpanMm)) {
                     outlinePaths.push(path);
                 }
 
             } else {
                 const unwoundPaths = unwrapCompoundPath(path)
-                    .filter(p => p.firstSegment && p.lastSegment && isWorthDrawing(p));
+                    .filter(p => p.firstSegment && p.lastSegment && isWorthDrawing(p, minSpanMm));
                 outlinePaths.push(...unwoundPaths);
             }
         }
@@ -224,7 +234,15 @@ export function generateInfills(pathsToInfill: paper.PathItem[], infillDensity: 
 // Set at one nib width rather than lower because that is the size at which the
 // question stops being about geometry: below it there is no mark to lose.
 // Above it, a small stroke is still a stroke and is left alone.
-const MIN_OUTLINE_SPAN_MM = DEFAULT_NIB_WIDTH_MM;
+//
+// Which nib, though, is the caller's to say: this is a statement about the pen
+// in the holder, not a constant. A 0.3mm fineliner draws the dot on an "i" four
+// times over, and a threshold that assumed a 1.2mm marker would throw it away.
+// DEFAULT_NIB_WIDTH_MM is the fallback for a request that says nothing, which
+// is the same nib the rest of the app assumes when it is not told.
+function minOutlineSpanMm(nibWidthMm?: number): number {
+    return nibWidthMm && nibWidthMm > 0 ? nibWidthMm : DEFAULT_NIB_WIDTH_MM;
+}
 
 /**
  * Drops outlines too small to draw as anything but a dot.
@@ -233,8 +251,8 @@ const MIN_OUTLINE_SPAN_MM = DEFAULT_NIB_WIDTH_MM;
  * the mark's size on the paper that decides this: a long wandering path inside
  * a half-millimetre box still lands as one blot.
  */
-function isWorthDrawing(path: paper.Path): boolean {
-    return Math.max(path.bounds.width, path.bounds.height) >= MIN_OUTLINE_SPAN_MM;
+function isWorthDrawing(path: paper.Path, minSpanMm: number): boolean {
+    return Math.max(path.bounds.width, path.bounds.height) >= minSpanMm;
 }
 
 function unwrapCompoundPath(path: paper.CompoundPath) {

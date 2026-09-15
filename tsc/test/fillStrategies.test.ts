@@ -286,11 +286,11 @@ if (!paperAvailable) {
     // screen - a four-level greyscale plot of a horse was aborted at 74%
     // because it was spending its time dotting.
 
-    function outlinesFor(size: number): number {
+    function outlinesFor(size: number, nibWidthMm?: number): number {
         paper.setup(new paper.Size(100, 100));
         const speck = new paper.Path.Rectangle(new paper.Point(10, 10), new paper.Size(size, size));
         speck.fillColor = new paper.Color("#000000");
-        const [infilled] = generateInfills([speck], 2);
+        const [infilled] = generateInfills([speck], 2, undefined, undefined, nibWidthMm);
         return infilled.outlinePaths.length;
     }
 
@@ -310,6 +310,18 @@ if (!paperAvailable) {
         // this failing.
         assert.strictEqual(outlinesFor(1.1), 0);
         assert.strictEqual(outlinesFor(1.3), 1);
+    });
+
+    test("infill.ts: the cut follows the pen, so a fineliner still draws its dots", () => {
+        // The whole argument for dropping these is that the pen cannot draw
+        // them as anything but a blot. A 0.3mm fineliner draws a 0.5mm mark
+        // four times over, so with that pen in the holder there is nothing to
+        // drop - and with a 3mm marker there is a great deal more.
+        assert.strictEqual(outlinesFor(0.5, 0.3), 1);
+        assert.strictEqual(outlinesFor(2, 3), 0);
+        // Saying nothing about the pen behaves exactly as it always did.
+        assert.strictEqual(outlinesFor(0.5), 0);
+        assert.strictEqual(outlinesFor(2), 1);
     });
 
     test("infill.ts: specks inside a compound path go too, and the shape itself stays", () => {

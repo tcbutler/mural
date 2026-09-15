@@ -852,6 +852,12 @@ function init() {
             updateToneReadouts();
             $("#fillMethod").val("crossHatch45");
             setColorMode('single');
+            // .val() fires no change event, so the visibility rules have to be
+            // re-applied by hand: without this, resetting a scribble back to
+            // "trace" leaves fill style, infill density, despeckle and colour
+            // mode hidden, and re-picking the already-selected "trace" option
+            // fires nothing either - there is no way back to them.
+            applyMarkModeVisibility();
             $("#grayscaleLevels").val(3);
             $("#colorOverprintCheckbox").prop("checked", false);
             $("#hueGroupingCheckbox").prop("checked", false);
@@ -1161,6 +1167,11 @@ function init() {
             infillDensity: getInfillDensity(),
             flattenPaths: getFlattenPaths(),
             topDistance: currentState.topDistance,
+            // The pen in the holder. Sent on every render, not only when hue
+            // grouping wants it for the ink model: the renderer also uses it
+            // to decide the smallest mark worth lifting the pen for, and that
+            // question is asked of every drawing (tsc/src/infill.ts).
+            nibWidthMm: getNibWidthMm(),
             // Where the drawing lands in the drawable area (tsc/src/placement.ts).
             // The pipeline renders at the origin regardless; this translates the
             // finished command file, so the preview still shows the artwork
@@ -1308,12 +1319,22 @@ function init() {
 
     // A scribble reads the picture and draws it, so everything that configures
     // a trace has nothing to act on while one is selected.
+    //
+    // This is the ONLY thing that restores those controls, so it has to be
+    // called wherever the mark mode or the slide changes underneath them -
+    // not just on the select's own change event, which a .val() reset does
+    // not fire.
     function applyMarkModeVisibility() {
         const scribbling = !!getMarkMode();
         $("#markOptions").toggle(scribbling);
-        $("label[for='fillMethod'],#fillMethod,#fillMethodRationale").toggle(!scribbling);
-        $("label[for='infillDensity'],#infillDensity,#infillDensityRationale").toggle(!scribbling);
-        $("label[for='turdSize'],#turdSize,#turdSizeRationale").toggle(!scribbling);
+        $("label[for='fillMethod'],#fillMethod").toggle(!scribbling);
+        $("label[for='infillDensity'],#infillDensity").toggle(!scribbling);
+        $("label[for='turdSize'],#turdSize").toggle(!scribbling);
+        // A rationale only exists once smart defaults have run for this
+        // image; showing an empty one leaves a blank gap under the control.
+        showRationaleIfAny('#fillMethodRationale', !scribbling);
+        showRationaleIfAny('#infillDensityRationale', !scribbling);
+        showRationaleIfAny('#turdSizeRationale', !scribbling);
         $("#colorModeLabel,#colorModeGroup").toggle(!scribbling);
         if (scribbling) {
             $("#grayscaleOptions,#multiColorOptions").hide();
@@ -1363,6 +1384,16 @@ function init() {
     });
 
     $("#pathTracing").click(async function() {
+        // A scribble left selected on the raster path would still be selected
+        // here, hidden, where it can mean nothing: this renderer has no raster
+        // for the algorithms to read. Hiding it is not enough - getMarkMode()
+        // would keep reporting it to the processing estimate, and the fill
+        // style, infill density and colour mode it had hidden would stay
+        // hidden in a renderer that uses all three. So reset it, and let the
+        // visibility rules put everything back.
+        $("#markMode").val("trace");
+        applyMarkModeVisibility();
+
         $("label[for='turdSize'],#turdSize").hide();
         // A vector SVG has no photographed paper to lift and no colour the
         // tracer is about to throw away, so neither tone control applies - and
@@ -1389,13 +1420,17 @@ function init() {
             setColorMode('single');
         }
         $("#grayscaleLevels").val(3);
-        $("label[for='turdSize'],#turdSize").show();
         $("#toneControls").show();
         $("label[for='markMode'],#markMode").show();
         // The advice only exists once smart defaults have run for this image,
         // and going back to the renderer picker hid it - so restore it if
         // there is one rather than leaving a blank gap or a stale panel.
-        $("#markModeRationale").toggle(!!$("#markModeRationale").find('small').text());
+        showRationaleIfAny('#markModeRationale', true);
+        // Which of the trace's own controls come back depends on the mark mode
+        // that is still selected - coming back from the renderer picker must
+        // not resurrect the despeckle slider under a scribble (the worker
+        // ignores it there), nor leave the shuffle button hidden under one.
+        applyMarkModeVisibility();
         $("#colorModeGrayscaleOption").show();
         $("label[for='flattenPathsCheckbox'],#flattenPathsCheckbox").hide();
 
@@ -2608,6 +2643,15 @@ function showRationale(selector, text) {
     $(selector).show();
 }
 
+// Shows a rationale panel only when there is one to show. A panel whose
+// <small> is still empty (smart defaults have not run for this image yet, or
+// this control got no advice) is a blank gap with a margin under it, not a
+// hidden one - so "make this visible again" always has to mean "if it has
+// something in it".
+function showRationaleIfAny(selector, visible) {
+    $(selector).toggle(!!visible && !!$(selector).find('small').text());
+}
+
 // Pre-sets every smart-defaulted control to its recommendation (per-image,
 // see smartDefaults.ts) and shows each one's rationale alongside it. Sets
 // values directly (.val()/.prop(), no .trigger()) so this never fires the
@@ -2647,7 +2691,14 @@ function applySmartDefaults(recommendations) {
     // each other rather than against this app's own hatch fills. So the
     // advice goes on screen and the choice stays with whoever is standing in
     // front of the plotter.
-    showRationale('#markModeRationale', recommendations.markMode.rationale);
+    //
+    // Only where there is a control for it to advise: this runs from
+    // runPreRenderEstimateIfNeeded on BOTH renderers, and the path-tracing
+    // one has already hidden the Mark making control - the scribble modes
+    // read a raster it does not have - so showing the panel there would leave
+    // an orphaned paragraph pointing at a control that isn't on screen.
+    $("#markModeRationale").find('small').text(recommendations.markMode.rationale);
+    showRationaleIfAny('#markModeRationale', $("#markMode").is(":visible"));
 }
 
 // Processing-time warning thresholds (seconds), applied to
