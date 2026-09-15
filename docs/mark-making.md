@@ -93,7 +93,7 @@ shading, which is the point of it:
 
 | | |
 |---|---|
-| <img src="../images/style-examples/crossHatch45-gray4.png" width="330"><br><sub>Cross-hatch, 4 levels · 2,876 strokes · 31.7 m</sub> | <img src="../images/style-examples/cycloid-gray4.png" width="330"><br><sub>Loop scribble, 4 levels · 2,860 strokes · 32.5 m</sub> |
+| <img src="../images/style-examples/crossHatch45-gray4.png" width="330"><br><sub>Cross-hatch, 4 levels · 1,345 strokes · 28.7 m</sub> | <img src="../images/style-examples/cycloid-gray4.png" width="330"><br><sub>Loop scribble, 4 levels · 1,329 strokes · 29.5 m</sub> |
 
 ### The right style for the subject
 
@@ -103,14 +103,14 @@ crossing it, for *less* ink than the flat grid:
 
 | | |
 |---|---|
-| <img src="../images/style-examples/crossHatch45-horse.png" width="330"><br><sub>Cross-hatch · 177 strokes · 11.3 m</sub> | <img src="../images/style-examples/gradientHatch-horse.png" width="330"><br><sub>Gradient hatch · 230 strokes · 7.6 m</sub> |
+| <img src="../images/style-examples/crossHatch45-horse.png" width="330"><br><sub>Cross-hatch · 146 strokes · 11.2 m</sub> | <img src="../images/style-examples/gradientHatch-horse.png" width="330"><br><sub>Gradient hatch · 199 strokes · 7.5 m</sub> |
 
 **Contour and spiral** want flat, clean-edged shapes, where following the outline
 means something:
 
 | | |
 |---|---|
-| <img src="../images/style-examples/contour-bluey.png" width="330"><br><sub>Contour · 79 strokes · 9.4 m</sub> | <img src="../images/style-examples/spiral-bluey.png" width="330"><br><sub>Spiral · 166 strokes · 11.3 m</sub> |
+| <img src="../images/style-examples/contour-bluey.png" width="330"><br><sub>Contour · 56 strokes · 9.4 m</sub> | <img src="../images/style-examples/spiral-bluey.png" width="330"><br><sub>Spiral · 141 strokes · 11.3 m</sub> |
 
 ### Tone and colour
 
@@ -120,7 +120,17 @@ time:
 
 | | | |
 |---|---|---|
-| <img src="../images/style-examples/crossHatch45-mono.png" width="230"><br><sub>Single colour · 177 strokes · 11.3 m</sub> | <img src="../images/style-examples/crossHatch45-gray3.png" width="230"><br><sub>3 levels · 2,626 strokes · 30.3 m</sub> | <img src="../images/style-examples/crossHatch45-gray4.png" width="230"><br><sub>4 levels · 2,876 strokes · 31.7 m</sub> |
+| <img src="../images/style-examples/crossHatch45-mono.png" width="230"><br><sub>Single colour · 146 strokes · 11.2 m</sub> | <img src="../images/style-examples/crossHatch45-gray3.png" width="230"><br><sub>3 levels · 1,201 strokes · 27.5 m</sub> | <img src="../images/style-examples/crossHatch45-gray4.png" width="230"><br><sub>4 levels · 1,345 strokes · 28.7 m</sub> |
+
+A photograph traced this way throws off thousands of specks, and a speck
+smaller than the nib is not a shape the pen can draw — trace it or touch the
+pen down once and the mark is the same dot of ink. Tracing one costs a
+pen-down, a pen-up and the travel to reach it, so anything narrower than the
+pen is left out (`infill.ts`). On a four-level horse at the 2400px the app
+rasterises to, that is around 1,500 strokes and some hundred minutes of
+plotting, at the price of slightly lighter mid-tones. Despeckle does not
+substitute for it: `turdSize` is an area in source pixels, so what it means on
+paper changes with the size of the raster.
 
 **Multi-colour** separates the image into one mask per pen and stops for a swap
 between them. It suits flat artwork, which is what k-means quantisation is good
@@ -133,7 +143,7 @@ instead of as separate inks. Two blues become one blue pen at two densities.
 
 | | |
 |---|---|
-| <img src="../images/style-examples/crossHatch45-color-bluey.png" width="330"><br><sub>**5 pens, no grouping** · 962 strokes · 33.7 m</sub> | <img src="../images/style-examples/crossHatch45-hue-bluey.png" width="330"><br><sub>**6 colours detected → 3 pens** · 2,934 strokes · 46.8 m</sub> |
+| <img src="../images/style-examples/crossHatch45-color-bluey.png" width="330"><br><sub>**5 pens, no grouping** · 727 strokes · 33.3 m</sub> | <img src="../images/style-examples/crossHatch45-hue-bluey.png" width="330"><br><sub>**6 colours detected → 3 pens** · 1,977 strokes · 45.2 m</sub> |
 
 Three pens carry it: one blue, one orange, one near-black. The tonal separation
 that five pens spent ink on is done with hatch density instead — which is why
